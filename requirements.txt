@@ -1,0 +1,4 @@
+edge-tts
+moviepy==1.0.3
+playwright
+Pillow

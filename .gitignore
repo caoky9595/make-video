@@ -1,0 +1,13 @@
+# Dependencies & temp files
+__pycache__/
+*.pyc
+temp/
+output/
+backgrounds/
+tiktok_cookies.json
+config.json
+.DS_Store
+*.mp4
+*.mp3
+*.srt
+*.vtt
