@@ -15,64 +15,28 @@ import requests
 # File lưu API key để không phải nhập lại
 CONFIG_FILE = "config.json"
 
-# Từ khoá mapping tiếng Việt -> tiếng Anh cho Pexels search
+# Cấu hình Video Nền Thôi Miên (Satisfying Loops) dành riêng cho Kênh kể truyện
+# Thay vì lấy cảnh văn phòng nhàm chán, hệ thống sẽ ưu tiên trích xuất Lofi chill
 KEYWORD_MAP = {
-    # Chủ đề phổ biến
-    "kiếm tiền": "making money",
-    "tiền": "money",
-    "thu nhập": "income",
-    "affiliate": "laptop work",
-    "bán hàng": "online shopping",
-    "sản phẩm": "product showcase",
-    "phần mềm": "software technology",
-    "công nghệ": "technology",
-    "AI": "artificial intelligence",
-    "trí tuệ nhân tạo": "artificial intelligence",
-    "laptop": "laptop aesthetic",
-    "điện thoại": "smartphone",
-    "ứng dụng": "mobile app",
-    "khóa học": "online learning",
-    "học": "study aesthetic",
-    "sinh viên": "student study",
-    "làm việc": "working desk",
-    "freelance": "freelancer laptop",
-    "thiết kế": "design creative",
-    "marketing": "digital marketing",
-    "mạng xã hội": "social media",
-    "tiktok": "social media phone",
-    "youtube": "content creator",
-    "blog": "blogging typing",
-    "viết": "typing keyboard",
-    "đọc": "reading book",
-    "sách": "book aesthetic",
-    "notion": "productivity app",
-    "template": "digital template",
-    "canva": "graphic design",
-    "crypto": "cryptocurrency",
-    "bitcoin": "bitcoin crypto",
-    "đầu tư": "investment finance",
-    "tài chính": "finance money",
-    "thương mại": "e-commerce",
-    "cà phê": "coffee aesthetic",
-    "cuộc sống": "lifestyle aesthetic",
-    "du lịch": "travel aesthetic",
-    "sức khỏe": "health fitness",
-    "ăn uống": "food aesthetic",
-    "nấu ăn": "cooking kitchen",
-    "thời trang": "fashion style",
-    "làm đẹp": "beauty skincare",
-    "game": "gaming setup",
-    "nhạc": "music headphone",
-    "podcast": "podcast microphone",
+    r"\bsợ\b": "creepy dark forest",
+    r"\bma\b": "scary dark",
+    r"\bác\b": "spooky dark background",
+    r"\bđêm\b": "driving night city rain",
+    r"\bbuồn\b": "rainy window aesthetic",
+    r"\bkhóc\b": "rain drops window",
+    r"\bcô đơn\b": "night sky clouds",
+    r"\btình yêu\b": "romantic sunset aesthetic",
+    r"\bchill\b": "lofi aesthetic",
+    r"\bmưa\b": "heavy rain cinematic",
 }
 
-# Fallback keywords nếu không tìm thấy từ khoá phù hợp
+# Fallback: Ưu tiên video Lofi như user yêu cầu
 FALLBACK_KEYWORDS = [
-    "aesthetic laptop",
-    "typing keyboard aesthetic",
-    "minimal desk setup",
-    "coffee work aesthetic",
-    "city night lights",
+    "lofi aesthetic",
+    "lofi chilling anime",
+    "relaxing lofi background",
+    "cozy lofi room aesthetic",
+    "vaporwave aesthetic loop",
 ]
 
 
@@ -119,15 +83,16 @@ def extract_keywords(script_text: str, max_keywords: int = 3):
     script_lower = script_text.lower()
     matched = []
 
-    # Tìm từ khoá mapping
-    for vn_word, en_word in KEYWORD_MAP.items():
-        if vn_word.lower() in script_lower:
+    # Tìm từ khoá mapping (Dùng regex để tránh bắt chữ chứa bên trong, VD: 'mạng' -> 'ma')
+    import re
+    for vn_regex, en_word in KEYWORD_MAP.items():
+        if re.search(vn_regex, script_lower):
             matched.append(en_word)
             if len(matched) >= max_keywords:
                 break
 
     if not matched:
-        # Fallback: dùng keyword mặc định
+        # Fallback: dùng lofi mặc định
         import random
         matched = [random.choice(FALLBACK_KEYWORDS)]
 

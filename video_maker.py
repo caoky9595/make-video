@@ -17,15 +17,18 @@ import os
 import re
 import random
 import platform
+import json
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from moviepy.editor import (
     VideoFileClip,
     AudioFileClip,
     CompositeVideoClip,
+    CompositeAudioClip,
     ColorClip,
     VideoClip,
     concatenate_videoclips,
+    afx
 )
 
 # ============================================================
@@ -38,8 +41,9 @@ FPS = 30
 # Cấu hình Subtitle
 FONT_SIZE = 60
 FONT_COLOR = (255, 255, 255)  # Trắng
+HIGHLIGHT_COLOR = (247, 194, 4)  # Vàng Hormozi mượt hơn (#F7C204)
 STROKE_COLOR = (0, 0, 0)  # Đen viền
-STROKE_WIDTH = 4
+STROKE_WIDTH = 5
 
 # Overlay tối nền để chữ nổi bật hơn
 OVERLAY_OPACITY = 0.35
@@ -79,56 +83,116 @@ def _get_font(size: int = FONT_SIZE):
     return ImageFont.load_default()
 
 
-def _render_text_frame(text: str, font, width: int, height: int):
+def _render_text_frame(text: str, font, width: int, height: int, active_idx: int = -1, style_mode: int = 2, position: str = "center"):
     """
-    Dùng Pillow để render text lên một frame RGBA trong suốt.
-    Trả về numpy array (H, W, 4) - RGBA.
+    Render Subtitle according to style_mode.
+    1: Ali (Normal case, soft shadow, blue/cyan active)
+    2: Marker Box (UPPERCASE, green background box)
+    3: MrBeast (UPPERCASE, thick stroke, jump, yellow active)
+    4: Typewriter (Normal case, black translucent band, type word by word)
     """
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Tính kích thước text để căn giữa
-    max_text_width = width - 100  # padding 2 bên
+    max_text_width = width - 100
+    
+    if style_mode in (2, 3):
+        words = text.upper().split()
+    else:
+        words = text.split()
+        
+    try:
+        space_width = int(draw.textlength(" ", font=font))
+    except AttributeError:
+        space_width = draw.textbbox((0,0), " A", font=font)[2] - draw.textbbox((0,0), "A", font=font)[2]
 
-    # Word wrap
-    words = text.split()
+    # Layout words
     lines = []
-    current_line = ""
-    for word in words:
-        test_line = f"{current_line} {word}".strip()
-        bbox = draw.textbbox((0, 0), test_line, font=font)
-        tw = bbox[2] - bbox[0]
-        if tw <= max_text_width:
-            current_line = test_line
+    current_line_words = []
+    current_width = 0
+    
+    for i, word in enumerate(words):
+        try:
+            w_width = int(draw.textlength(word, font=font))
+        except AttributeError:
+            w_bbox = draw.textbbox((0, 0), word, font=font)
+            w_width = w_bbox[2] - w_bbox[0]
+            
+        line_w_increment = w_width + space_width if current_line_words else w_width
+        if current_width + line_w_increment <= max_text_width:
+            current_line_words.append((i, word, w_width))
+            current_width += line_w_increment
         else:
-            if current_line:
-                lines.append(current_line)
-            current_line = word
-    if current_line:
-        lines.append(current_line)
-
-    # Tính tổng chiều cao
-    line_height = draw.textbbox((0, 0), "Ẩy", font=font)  # Dùng chữ cao nhất
-    single_line_h = (line_height[3] - line_height[1]) + 10  # +10 spacing
+            if current_line_words:
+                lines.append((current_line_words, current_width))
+            current_line_words = [(i, word, w_width)]
+            current_width = w_width
+            
+    if current_line_words:
+        lines.append((current_line_words, current_width))
+        
+    line_height = draw.textbbox((0, 0), "Ẩy", font=font)
+    single_line_h = (line_height[3] - line_height[1]) + 10
     total_h = single_line_h * len(lines)
+    
+    if position == "bottom":
+        # Cách đáy 400px để tránh đè lên UI Tiktok (caption, tim, share)
+        y = height - total_h - 400 
+    else:
+        y = (height - total_h) // 2
 
-    # Vẽ text căn giữa màn hình
-    y_start = (height - total_h) // 2
-    for i, line in enumerate(lines):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        tw = bbox[2] - bbox[0]
-        x = (width - tw) // 2
-        y = y_start + i * single_line_h
-
-        # Vẽ viền đen (stroke)
-        for dx in range(-STROKE_WIDTH, STROKE_WIDTH + 1):
-            for dy in range(-STROKE_WIDTH, STROKE_WIDTH + 1):
-                if dx * dx + dy * dy <= STROKE_WIDTH * STROKE_WIDTH:
-                    draw.text((x + dx, y + dy), line, font=font, fill=STROKE_COLOR + (255,))
-
-        # Vẽ chữ trắng
-        draw.text((x, y), line, font=font, fill=FONT_COLOR + (255,))
-
+    # Style 4 (Typewriter) Backdrop
+    if style_mode == 4:
+        draw.rectangle([0, y - 50, width, y + total_h + 50], fill=(0, 0, 0, 150))
+        
+    for line_words, line_w in lines:
+        x = (width - line_w) // 2
+        for i, word, w_width in line_words:
+            # Skip words outside typewriter view
+            if style_mode == 4 and i > active_idx:
+                break
+                
+            current_y = y
+            fill_color = (255, 255, 255, 255)
+            
+            if style_mode == 1:
+                # Ali Abdaal style
+                fill_color = (135, 206, 250, 255) if i == active_idx else (230, 230, 230, 255)
+                draw.text((x+3, y+3), word, font=font, fill=(0,0,0,150))
+                draw.text((x, y), word, font=font, fill=fill_color)
+                
+            elif style_mode == 2:
+                # Marker Box
+                if i == active_idx:
+                    draw.rectangle([x-10, y-5, x+w_width+10, y+(single_line_h-10)], fill=(57, 255, 20, 255))
+                    fill_color = (0, 0, 0, 255)
+                else:
+                    draw.text((x+4, y+4), word, font=font, fill=(0,0,0,255))
+                draw.text((x, y), word, font=font, fill=fill_color)
+                
+            elif style_mode == 3:
+                # MrBeast
+                f_font = font
+                stroke_w = STROKE_WIDTH
+                if i == active_idx:
+                    fill_color = HIGHLIGHT_COLOR + (255,)
+                    current_y = y - 10
+                    stroke_w = STROKE_WIDTH + 1
+                    
+                for dx in range(-stroke_w, stroke_w + 1):
+                    for dy in range(-stroke_w, stroke_w + 1):
+                        if dx * dx + dy * dy <= stroke_w * stroke_w:
+                            draw.text((x + dx, current_y + dy), word, font=f_font, fill=STROKE_COLOR + (255,))
+                draw.text((x, current_y), word, font=f_font, fill=fill_color)
+                
+            elif style_mode == 4:
+                # Typewriter
+                draw.text((x, y), word, font=font, fill=(255,255,255,255))
+                
+            x += w_width + space_width
+            
+        y += single_line_h
+        
     return np.array(img)
 
 
@@ -167,6 +231,14 @@ def _parse_srt(srt_path: str):
         print(f"  [Subtitles] Parsed {len(subs)} subtitle blocks from SRT.")
 
     return subs
+
+
+def _parse_words(srt_path: str):
+    words_path = srt_path.replace(".srt", "_words.json")
+    if os.path.exists(words_path):
+        with open(words_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
 
 
 def _pick_background(bg_dir: str):
@@ -232,6 +304,9 @@ def make_video(
     srt_path: str,
     bg_dir: str = "backgrounds",
     output_path: str = "output/final_video.mp4",
+    style: int = 1,
+    position: str = "bottom",
+    bgm_path: str = None,
 ):
     """
     Hàm chính: Ghép audio + video nền + subtitle thành video TikTok hoàn chỉnh.
@@ -250,6 +325,22 @@ def make_video(
     audio = AudioFileClip(audio_path)
     duration = audio.duration
     print(f"  [Audio] Duration: {duration:.1f}s")
+    
+    # MIX AUDIO BACKGROUND (BGM)
+    if bgm_path and os.path.exists(bgm_path):
+        print(f"  [Audio] Mixing BGM: {os.path.basename(bgm_path)}")
+        try:
+            bgm_clip = AudioFileClip(bgm_path)
+            
+            # Loop BGM if it's shorter than TTS duration, then trim
+            bgm_clip = afx.audio_loop(bgm_clip, duration=duration)
+            
+            # Reduce BGM volume to 10% so it acts as background
+            bgm_clip = bgm_clip.volumex(0.1)
+            
+            audio = CompositeAudioClip([bgm_clip, audio])
+        except Exception as e:
+            print(f"  [Audio] ⚠️ Failed to mix BGM: {e}")
 
     # 2. Chuẩn bị video nền
     bg_path = _pick_background(bg_dir)
@@ -257,26 +348,70 @@ def make_video(
 
     # 3. Parse subtitles từ SRT
     subs = _parse_srt(srt_path)
+    words_data = _parse_words(srt_path)
     font = _get_font()
 
-    # 4. Pre-render tất cả text frames bằng Pillow (RGBA)
-    print("  [Subtitles] Pre-rendering text frames...")
-    sub_frames = {}
-    for i, sub in enumerate(subs):
-        frame_rgba = _render_text_frame(sub["text"], font, VIDEO_WIDTH, VIDEO_HEIGHT)
-        sub_frames[i] = frame_rgba
+    # 3.5 Tạo Thumbnail tự động (Ảnh bìa)
+    print("  [Thumbnail] Generating video cover...")
+    try:
+        first_frame = bg_clip.get_frame(0.1).astype(np.uint8)
+        img = Image.fromarray(first_frame).convert("RGBA")
+        img = img.filter(ImageFilter.GaussianBlur(10))
+        img = ImageEnhance.Brightness(img).enhance(0.4)
+        
+        # Render câu Hook đầu tiên thành text 3D mập mạp bự gấp đôi ở giữa màn hình
+        thumb_font = _get_font(FONT_SIZE * 2)
+        title_text = subs[0]["text"] if subs else "TIKTOK"
+        
+        # Dùng phong cách MrBeast (style_mode=3) để chữ nổi bần bật với từ khoá đầu màu Vàng.
+        text_layer_np = _render_text_frame(title_text, thumb_font, VIDEO_WIDTH, VIDEO_HEIGHT, active_idx=0, style_mode=3, position="center")
+        text_layer_img = Image.fromarray(text_layer_np, "RGBA")
+        
+        # Dán lớp chữ lên nền mờ
+        img.paste(text_layer_img, (0, 0), text_layer_img)
+        
+        thumb_path = output_path.rsplit(".", 1)[0] + "_cover.jpg"
+        img.convert("RGB").save(thumb_path)
+        print(f"  [Thumbnail] ✅ Saved cover to: {thumb_path}")
+    except Exception as e:
+         print(f"  [Thumbnail] ⚠️ Thumbnail generation failed: {e}")
+
+    # Ghép words vào subs
+    for sub in subs:
+        sub["words"] = []
+        for w in words_data:
+            w_mid = (w["start"] + w["end"]) / 2
+            if sub["start"] - 0.2 <= w_mid <= sub["end"] + 0.2:
+                sub["words"].append(w)
+
+    # 4. Pre-render text frames caching
+    print(f"  [Subtitles] Rendering dynamic text frames cache (Style {style}, Position {position})...")
+    frame_cache = {}
+    
+    def get_text_frame(sub_index, active_idx):
+        key = (sub_index, active_idx)
+        if key not in frame_cache:
+            frame_cache[key] = _render_text_frame(subs[sub_index]["text"], font, VIDEO_WIDTH, VIDEO_HEIGHT, active_idx, style_mode=style, position=position)
+        return frame_cache[key]
 
     # 5. Tạo clip kết hợp: background + overlay tối + subtitle
     def make_combined_frame(get_frame, t):
         bg_frame = get_frame(t).astype(np.float32)
         # Phủ overlay tối
         bg_frame = bg_frame * (1 - OVERLAY_OPACITY)
+        
         # Tìm subtitle phù hợp với thời điểm t
         sub_rgba = None
         for i, sub in enumerate(subs):
-            if sub["start"] <= t < sub["end"]:
-                sub_rgba = sub_frames[i]
+            if sub["start"] <= t <= sub["end"]:
+                active_word_index = -1
+                for w_idx, w in enumerate(sub["words"]):
+                    if w["start"] <= t <= w["end"]:
+                        active_word_index = w_idx
+                        break
+                sub_rgba = get_text_frame(i, active_word_index)
                 break
+                
         if sub_rgba is not None:
             alpha = sub_rgba[:, :, 3:4].astype(np.float32) / 255.0
             sub_rgb = sub_rgba[:, :, :3].astype(np.float32)

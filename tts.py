@@ -72,6 +72,8 @@ def parse_script(raw_text: str) -> str:
     return clean_text
 
 
+import json
+
 async def generate_tts(text_file: str, output_audio: str, output_srt: str, rate: str = "+20%", voice: str = "hoaimy"):
     """
     Đọc file kịch bản, sinh ra audio MP3 và subtitle SRT.
@@ -110,21 +112,80 @@ async def generate_tts(text_file: str, output_audio: str, output_srt: str, rate:
         if dirpath:
             os.makedirs(dirpath, exist_ok=True)
 
+    word_boundaries = []
+    sentence_boundaries = []
+
     with open(output_audio, "wb") as audio_file:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 audio_file.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                submaker.feed(chunk)
+                word_boundaries.append({
+                    "text": chunk["text"],
+                    "offset": chunk["offset"],
+                    "duration": chunk["duration"]
+                })
+            elif chunk["type"] == "SentenceBoundary":
+                submaker.feed(chunk)
+                sentence_boundaries.append({
+                    "text": chunk["text"],
+                    "offset": chunk["offset"],
+                    "duration": chunk["duration"]
+                })
             else:
                 # Feed WordBoundary và SentenceBoundary cho SubMaker
                 submaker.feed(chunk)
+
+    # Nếu không có WordBoundary (do giọng không hỗ trợ), ta nội suy (interpolate) từ SentenceBoundary
+    if not word_boundaries and sentence_boundaries:
+        print("  [TTS] WordBoundary not supported by this voice. Interpolating word timings...")
+        for sb in sentence_boundaries:
+            s_text = sb["text"]
+            s_offset = sb["offset"]
+            s_duration = sb["duration"]
+            s_len = len(s_text)
+            
+            words_in_sentence = s_text.split()
+            current_offset = s_offset
+            for w in words_in_sentence:
+                w_len = len(w)
+                if s_len > 0:
+                    w_duration = int(s_duration * (w_len / s_len))
+                    space_duration = int(s_duration * (1 / s_len))
+                else:
+                    w_duration = 0
+                    space_duration = 0
+                
+                word_boundaries.append({
+                    "text": w,
+                    "offset": current_offset,
+                    "duration": w_duration
+                })
+                current_offset += w_duration + space_duration
 
     # Xuất file SRT (SubRip format)
     srt_content = submaker.get_srt()
     with open(output_srt, "w", encoding="utf-8") as srt_file:
         srt_file.write(srt_content)
 
+    # Xuất file JSON chứa chi tiết từng từ
+    words_data = []
+    for wb in word_boundaries:
+        start_sec = wb["offset"] / 10000000.0
+        end_sec = start_sec + (wb["duration"] / 10000000.0)
+        words_data.append({
+            "text": wb["text"],
+            "start": start_sec,
+            "end": end_sec
+        })
+    words_json_path = output_srt.replace(".srt", "_words.json")
+    with open(words_json_path, "w", encoding="utf-8") as f:
+        json.dump(words_data, f, ensure_ascii=False, indent=2)
+
     print(f"  [TTS] ✅ Audio saved: {output_audio}")
     print(f"  [TTS] ✅ Subtitles saved: {output_srt}")
+    print(f"  [TTS] ✅ Word timing saved: {words_json_path}")
 
 
 def run_tts(text_file: str, output_audio: str, output_srt: str, rate: str = "+20%", voice: str = "hoaimy"):
