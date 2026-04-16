@@ -8,12 +8,12 @@ API Key miễn phí, không giới hạn, không watermark.
 """
 
 import os
-import json
 import re
 import requests
+from dotenv import load_dotenv
 
-# File lưu API key để không phải nhập lại
-CONFIG_FILE = "config.json"
+# Tải biến môi trường từ file .env
+load_dotenv()
 
 # Cấu hình Video Nền Thôi Miên (Satisfying Loops) dành riêng cho Kênh kể truyện
 # Thay vì lấy cảnh văn phòng nhàm chán, hệ thống sẽ ưu tiên trích xuất Lofi chill
@@ -40,38 +40,16 @@ FALLBACK_KEYWORDS = [
 ]
 
 
-def _load_config():
-    """Đọc config (API key) từ file."""
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def _save_config(config: dict):
-    """Lưu config ra file."""
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
-
-
 def get_api_key():
-    """Lấy Pexels API key từ config hoặc yêu cầu nhập."""
-    config = _load_config()
-    api_key = config.get("pexels_api_key", "")
+    """Lấy Pexels API key từ biến môi trường (.env)."""
+    api_key = os.getenv("PEXELS_API_KEY", "")
 
     if not api_key:
         print("\n🔑 Cần Pexels API Key (miễn phí) để tự động tìm video nền.")
         print("   Đăng ký tại: https://www.pexels.com/api/")
-        print("   Sau khi đăng ký, copy API Key và dán vào đây.\n")
-        api_key = input("   Nhập Pexels API Key: ").strip()
-
-        if api_key:
-            config["pexels_api_key"] = api_key
-            _save_config(config)
-            print("   ✅ API Key đã được lưu vào config.json\n")
-        else:
-            print("   ⚠️  Không có API Key. Sẽ dùng video nền có sẵn trong backgrounds/")
-            return None
+        print("   Vui lòng thêm PEXELS_API_KEY vào file .env của bạn.\n")
+        print("   ⚠️  Không có API Key. Sẽ dùng video nền có sẵn trong backgrounds/")
+        return None
 
     return api_key
 
