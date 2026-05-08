@@ -22,6 +22,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from moviepy.editor import (
     VideoFileClip,
+    ImageClip,
     AudioFileClip,
     CompositeVideoClip,
     CompositeAudioClip,
@@ -47,6 +48,7 @@ STROKE_WIDTH = 5
 
 # Overlay tối nền để chữ nổi bật hơn
 OVERLAY_OPACITY = 0.35
+BGM_VOLUME = 0.22
 
 
 def _get_font(size: int = FONT_SIZE):
@@ -259,6 +261,80 @@ def _pick_background(bg_dir: str):
     return chosen
 
 
+def _collect_visual_sources(
+    bg_dir: str,
+    image_dir: str,
+    visual_mode: str,
+    uploaded_images=None,
+):
+    """Trả về danh sách nguồn visual theo mode: pexels | uploaded | mix."""
+    video_ext = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+    image_ext = (".jpg", ".jpeg", ".png", ".webp")
+
+    videos = []
+    images = []
+
+    if os.path.isdir(bg_dir):
+        videos = [
+            os.path.join(bg_dir, f)
+            for f in os.listdir(bg_dir)
+            if f.lower().endswith(video_ext)
+        ]
+
+    if os.path.isdir(image_dir):
+        images = [
+            os.path.join(image_dir, f)
+            for f in os.listdir(image_dir)
+            if f.lower().endswith(image_ext)
+        ]
+
+    if uploaded_images:
+        allowed = {os.path.basename(x) for x in uploaded_images}
+        images = [p for p in images if os.path.basename(p) in allowed]
+
+    if visual_mode == "uploaded":
+        return images
+    if visual_mode == "mix":
+        return videos + images
+    return videos
+
+
+def _prepare_image_background(image_path: str, duration: float):
+    """Chuẩn bị nền từ ảnh tĩnh (crop/resize về 1080x1920, giữ nguyên suốt duration)."""
+    clip = ImageClip(image_path)
+    clip_ratio = clip.w / clip.h
+    target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT
+
+    if clip_ratio > target_ratio:
+        clip = clip.resize(height=VIDEO_HEIGHT)
+        x_center = clip.w / 2
+        clip = clip.crop(
+            x1=x_center - VIDEO_WIDTH / 2,
+            x2=x_center + VIDEO_WIDTH / 2,
+            y1=0,
+            y2=VIDEO_HEIGHT,
+        )
+    else:
+        clip = clip.resize(width=VIDEO_WIDTH)
+        y_center = clip.h / 2
+        clip = clip.crop(
+            x1=0,
+            x2=VIDEO_WIDTH,
+            y1=y_center - VIDEO_HEIGHT / 2,
+            y2=y_center + VIDEO_HEIGHT / 2,
+        )
+
+    return clip.set_duration(duration)
+
+
+def _prepare_visual_background(asset_path: str, duration: float):
+    """Tự động xử lý background là video hoặc ảnh."""
+    image_ext = (".jpg", ".jpeg", ".png", ".webp")
+    if asset_path.lower().endswith(image_ext):
+        return _prepare_image_background(asset_path, duration)
+    return _prepare_background(asset_path, duration)
+
+
 def _prepare_background(bg_path: str, duration: float):
     """
     Chuẩn bị video nền: crop/resize về 1080x1920 và loop nếu ngắn hơn audio.
@@ -303,10 +379,15 @@ def make_video(
     audio_path: str,
     srt_path: str,
     bg_dir: str = "backgrounds",
+    image_dir: str = "uploaded_images",
     output_path: str = "output/final_video.mp4",
     style: int = 1,
     position: str = "bottom",
     bgm_path: str = None,
+    bgm_start_sec: float = 0.0,
+    bgm_volume: float = BGM_VOLUME,
+    visual_mode: str = "pexels",
+    uploaded_images=None,
 ):
     """
     Hàm chính: Ghép audio + video nền + subtitle thành video TikTok hoàn chỉnh.
@@ -327,24 +408,48 @@ def make_video(
     print(f"  [Audio] Duration: {duration:.1f}s")
     
     # MIX AUDIO BACKGROUND (BGM)
+    bgm_mix_clip = None
+    bgm_volume = max(0.0, min(1.0, float(bgm_volume)))
     if bgm_path and os.path.exists(bgm_path):
         print(f"  [Audio] Mixing BGM: {os.path.basename(bgm_path)}")
         try:
             bgm_clip = AudioFileClip(bgm_path)
-            
-            # Loop BGM if it's shorter than TTS duration, then trim
-            bgm_clip = afx.audio_loop(bgm_clip, duration=duration)
-            
-            # Reduce BGM volume to 10% so it acts as background
-            bgm_clip = bgm_clip.volumex(0.1)
-            
-            audio = CompositeAudioClip([bgm_clip, audio])
+            bgm_start_sec = max(0.0, float(bgm_start_sec or 0.0))
+            if bgm_start_sec >= bgm_clip.duration:
+                print("  [Audio] ⚠️ BGM start vượt độ dài file, reset về 0s")
+                bgm_start_sec = 0.0
+
+            bgm_mix_clip = bgm_clip.subclip(bgm_start_sec, bgm_clip.duration)
+            if bgm_mix_clip.duration <= 0.05:
+                bgm_mix_clip = bgm_clip
+
+            # Loop segment nhạc nếu ngắn hơn giọng đọc, rồi cắt vừa duration.
+            bgm_mix_clip = afx.audio_loop(bgm_mix_clip, duration=duration)
+            bgm_mix_clip = bgm_mix_clip.subclip(0, duration)
+
+            # Keep BGM audible while still behind voice.
+            bgm_mix_clip = bgm_mix_clip.volumex(bgm_volume)
+            print(f"  [Audio] BGM volume: {bgm_volume:.2f}")
+
+            audio = CompositeAudioClip([bgm_mix_clip, audio])
         except Exception as e:
             print(f"  [Audio] ⚠️ Failed to mix BGM: {e}")
 
     # 2. Chuẩn bị video nền
-    bg_path = _pick_background(bg_dir)
-    bg_clip = _prepare_background(bg_path, duration)
+    visual_sources = _collect_visual_sources(
+        bg_dir=bg_dir,
+        image_dir=image_dir,
+        visual_mode=visual_mode,
+        uploaded_images=uploaded_images,
+    )
+    if not visual_sources:
+        raise FileNotFoundError(
+            "Không có nguồn visual hợp lệ. Hãy thêm video vào backgrounds/ hoặc ảnh vào uploaded_images/."
+        )
+
+    bg_path = random.choice(visual_sources)
+    print(f"  [Background] Selected: {os.path.basename(bg_path)}")
+    bg_clip = _prepare_visual_background(bg_path, duration)
 
     # 3. Parse subtitles từ SRT
     subs = _parse_srt(srt_path)
@@ -437,6 +542,8 @@ def make_video(
     # Dọn dẹp bộ nhớ
     final.close()
     audio.close()
+    if bgm_mix_clip is not None:
+        bgm_mix_clip.close()
     bg_clip.close()
 
     print(f"\n✅ Video created successfully: {output_path}")

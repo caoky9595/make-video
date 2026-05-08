@@ -18,11 +18,17 @@ import random
 from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
 
 load_dotenv()
 
 app = Flask(__name__, static_folder="webapp", template_folder="webapp")
 CORS(app)
+
+UPLOADED_IMAGE_DIR = "uploaded_images"
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+MUSIC_DIR = "audio_bg"
+MUSIC_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm")
 
 # Trạng thái pipeline
 pipeline_status = {
@@ -52,6 +58,78 @@ def serve_static(filename):
 # ============================================================
 # API ENDPOINTS
 # ============================================================
+
+def _list_media(directory: str, supported_ext: tuple):
+    os.makedirs(directory, exist_ok=True)
+    files = [f for f in os.listdir(directory) if f.lower().endswith(supported_ext)]
+    result = []
+    for f in sorted(files):
+        file_path = os.path.join(directory, f)
+        result.append({
+            "name": f,
+            "path": file_path,
+            "size_mb": round(os.path.getsize(file_path) / 1024 / 1024, 2),
+        })
+    return result
+
+
+def _next_available_filename(directory: str, filename: str):
+    name, ext = os.path.splitext(filename)
+    candidate = filename
+    i = 1
+    while os.path.exists(os.path.join(directory, candidate)):
+        candidate = f"{name}_{i}{ext}"
+        i += 1
+    return candidate
+
+
+def _parse_time_offset_to_seconds(value):
+    """Parse thời gian nhạc từ số giây hoặc chuỗi mm:ss / hh:mm:ss."""
+    if value is None:
+        return 0.0
+
+    if isinstance(value, (int, float)):
+        return max(0.0, float(value))
+
+    raw = str(value).strip()
+    if not raw:
+        return 0.0
+
+    # Plain seconds
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+
+    # mm:ss or hh:mm:ss
+    parts = raw.split(":")
+    if len(parts) not in (2, 3):
+        raise ValueError("Thời gian nhạc không hợp lệ. Dùng mm:ss hoặc hh:mm:ss")
+    if any((not p.isdigit()) for p in parts):
+        raise ValueError("Thời gian nhạc không hợp lệ. Dùng mm:ss hoặc hh:mm:ss")
+
+    nums = [int(p) for p in parts]
+    if len(nums) == 2:
+        mm, ss = nums
+        if ss >= 60:
+            raise ValueError("Giây phải nhỏ hơn 60")
+        return float(mm * 60 + ss)
+
+    hh, mm, ss = nums
+    if mm >= 60 or ss >= 60:
+        raise ValueError("Phút/giây phải nhỏ hơn 60")
+    return float(hh * 3600 + mm * 60 + ss)
+
+
+def _parse_music_volume(value, default=0.22):
+    """Parse âm lượng nhạc nền trong khoảng [0.0, 1.0]."""
+    if value is None:
+        return float(default)
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return max(0.0, min(1.0, parsed))
 
 @app.route("/api/voices", methods=["GET"])
 def api_voices():
@@ -180,12 +258,146 @@ def api_backgrounds():
     } for f in files])
 
 
+@app.route("/api/images", methods=["GET"])
+def api_images():
+    """Trả về danh sách ảnh đã upload cho Studio."""
+    return jsonify(_list_media(UPLOADED_IMAGE_DIR, IMAGE_EXTENSIONS))
+
+
+@app.route("/api/images/upload", methods=["POST"])
+def api_images_upload():
+    """Upload một hoặc nhiều ảnh vào thư viện Studio."""
+    files = request.files.getlist("images")
+    if not files:
+        return jsonify({"error": "Không có file ảnh nào được gửi lên!"}), 400
+
+    os.makedirs(UPLOADED_IMAGE_DIR, exist_ok=True)
+    uploaded = []
+    rejected = []
+
+    for f in files:
+        original_name = (f.filename or "").strip()
+        if not original_name:
+            continue
+
+        safe_name = secure_filename(original_name)
+        ext = os.path.splitext(safe_name)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            rejected.append(original_name)
+            continue
+
+        final_name = _next_available_filename(UPLOADED_IMAGE_DIR, safe_name)
+        save_path = os.path.join(UPLOADED_IMAGE_DIR, final_name)
+        f.save(save_path)
+        uploaded.append(final_name)
+
+    if not uploaded:
+        return jsonify({
+            "error": "Không có file hợp lệ. Chỉ hỗ trợ JPG/JPEG/PNG/WEBP.",
+            "rejected": rejected,
+        }), 400
+
+    return jsonify({"success": True, "uploaded": uploaded, "rejected": rejected})
+
+
+@app.route("/api/images/delete", methods=["POST"])
+def api_images_delete():
+    """Xóa một hoặc nhiều ảnh đã upload."""
+    data = request.json or {}
+    filenames = data.get("filenames", [])
+    if not filenames:
+        return jsonify({"error": "Không có ảnh nào được chọn!"}), 400
+
+    deleted = []
+    for name in filenames:
+        if not isinstance(name, str):
+            continue
+        safe_name = os.path.basename(name)
+        ext = os.path.splitext(safe_name)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            continue
+
+        img_path = os.path.join(UPLOADED_IMAGE_DIR, safe_name)
+        if os.path.exists(img_path):
+            os.remove(img_path)
+            deleted.append(safe_name)
+
+    return jsonify({"success": True, "deleted": deleted})
+
+
+@app.route("/api/music", methods=["GET"])
+def api_music():
+    """Trả về danh sách nhạc nền trong thư viện."""
+    return jsonify(_list_media(MUSIC_DIR, MUSIC_EXTENSIONS))
+
+
+@app.route("/api/music/upload", methods=["POST"])
+def api_music_upload():
+    """Upload một hoặc nhiều file nhạc vào thư viện."""
+    files = request.files.getlist("tracks")
+    if not files:
+        return jsonify({"error": "Không có file nhạc nào được gửi lên!"}), 400
+
+    os.makedirs(MUSIC_DIR, exist_ok=True)
+    uploaded = []
+    rejected = []
+
+    for f in files:
+        original_name = (f.filename or "").strip()
+        if not original_name:
+            continue
+
+        safe_name = secure_filename(original_name)
+        ext = os.path.splitext(safe_name)[1].lower()
+        if ext not in MUSIC_EXTENSIONS:
+            rejected.append(original_name)
+            continue
+
+        final_name = _next_available_filename(MUSIC_DIR, safe_name)
+        save_path = os.path.join(MUSIC_DIR, final_name)
+        f.save(save_path)
+        uploaded.append(final_name)
+
+    if not uploaded:
+        return jsonify({
+            "error": "Không có file nhạc hợp lệ.",
+            "rejected": rejected,
+        }), 400
+
+    return jsonify({"success": True, "uploaded": uploaded, "rejected": rejected})
+
+
+@app.route("/api/music/delete", methods=["POST"])
+def api_music_delete():
+    """Xóa một hoặc nhiều file nhạc khỏi thư viện."""
+    data = request.json or {}
+    filenames = data.get("filenames", [])
+    if not filenames:
+        return jsonify({"error": "Không có file nhạc nào được chọn!"}), 400
+
+    deleted = []
+    for name in filenames:
+        if not isinstance(name, str):
+            continue
+        safe_name = os.path.basename(name)
+        ext = os.path.splitext(safe_name)[1].lower()
+        if ext not in MUSIC_EXTENSIONS:
+            continue
+
+        music_path = os.path.join(MUSIC_DIR, safe_name)
+        if os.path.exists(music_path):
+            os.remove(music_path)
+            deleted.append(safe_name)
+
+    return jsonify({"success": True, "deleted": deleted})
+
+
 @app.route("/api/bgm", methods=["GET"])
 def api_bgm():
     """Trả về danh sách nhạc nền có sẵn."""
     bgm_dir = "audio_bg"
     os.makedirs(bgm_dir, exist_ok=True)
-    supported = (".mp3", ".wav", ".ogg")
+    supported = MUSIC_EXTENSIONS
     files = [f for f in os.listdir(bgm_dir) if f.lower().endswith(supported)]
     return jsonify([{
         "name": f,
@@ -266,9 +478,39 @@ def api_pipeline_start():
     rate = data.get("rate", "+20%")
     style = data.get("style", 1)
     position = data.get("position", "bottom")
+    visual_mode = data.get("visual_mode", "pexels")
+    uploaded_images = data.get("uploaded_images", [])
+    music_file = data.get("music_file")
+    music_offset_sec = data.get("music_offset_sec", 0)
+    music_volume = data.get("music_volume", 0.22)
+    music_mode = data.get("music_mode", "manual")
     script_file = data.get("script", "script.txt")
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_file = data.get("output", f"output/video_{timestamp}.mp4")
+
+    if visual_mode not in ("pexels", "mix", "uploaded"):
+        visual_mode = "pexels"
+
+    if not isinstance(uploaded_images, list):
+        uploaded_images = []
+
+    if music_mode not in ("manual", "ai_local"):
+        music_mode = "manual"
+
+    try:
+        music_offset_sec = _parse_time_offset_to_seconds(music_offset_sec)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Thời gian bắt đầu nhạc không hợp lệ. Dùng mm:ss hoặc hh:mm:ss"}), 400
+
+    music_volume = _parse_music_volume(music_volume, default=0.22)
+
+    if isinstance(music_file, str):
+        music_file = os.path.basename(music_file)
+    else:
+        music_file = None
+
+    # Chỉ giữ tên file an toàn để tránh path traversal.
+    uploaded_images = [os.path.basename(str(x)) for x in uploaded_images if str(x).strip()]
 
     def run_pipeline():
         global pipeline_status
@@ -282,6 +524,9 @@ def api_pipeline_start():
         }
 
         try:
+            with open(script_file, "r", encoding="utf-8") as f:
+                script_text = f.read().strip()
+
             # Bước 1: TTS
             from tts import run_tts
             audio_path = "temp/audio.mp3"
@@ -294,24 +539,68 @@ def api_pipeline_start():
 
             # Bước 2: Tìm BG nếu cần
             bg_dir = "backgrounds"
+            image_dir = UPLOADED_IMAGE_DIR
             os.makedirs(bg_dir, exist_ok=True)
+            os.makedirs(image_dir, exist_ok=True)
             supported = (".mp4", ".mov", ".avi", ".mkv", ".webm")
             bg_videos = [f for f in os.listdir(bg_dir) if f.lower().endswith(supported)]
+            studio_images = [f for f in os.listdir(image_dir) if f.lower().endswith(IMAGE_EXTENSIONS)]
 
-            if not bg_videos:
-                with open(script_file, "r", encoding="utf-8") as f:
-                    script_text = f.read()
+            # Nếu user chọn một subset ảnh cụ thể, chỉ dùng subset đó.
+            if uploaded_images:
+                selected = set(uploaded_images)
+                studio_images = [f for f in studio_images if f in selected]
+
+            need_pexels = visual_mode in ("pexels", "mix")
+            if need_pexels and not bg_videos:
                 from bg_finder import find_and_download_background
                 find_and_download_background(script_text, output_dir=bg_dir)
+                bg_videos = [f for f in os.listdir(bg_dir) if f.lower().endswith(supported)]
+
+            if visual_mode == "pexels" and not bg_videos:
+                raise FileNotFoundError("Không có video Pexels/background để render.")
+
+            if visual_mode == "uploaded" and not studio_images:
+                raise FileNotFoundError("Bạn đã chọn 'Chỉ dùng ảnh upload' nhưng chưa có ảnh nào.")
+
+            if visual_mode == "mix" and not (bg_videos or studio_images):
+                raise FileNotFoundError("Không tìm thấy ảnh upload hoặc video Pexels/background để render.")
 
             pipeline_status.update({"step": "render", "progress": 50, "message": "Đang render video..."})
 
             # Bước 3: Render
             from video_maker import make_video
-            bgm_dir = "audio_bg"
+            bgm_dir = MUSIC_DIR
             os.makedirs(bgm_dir, exist_ok=True)
-            bgm_files = [f for f in os.listdir(bgm_dir) if f.lower().endswith((".mp3", ".wav", ".ogg"))]
-            bgm_path = os.path.join(bgm_dir, random.choice(bgm_files)) if bgm_files else None
+            bgm_files = [f for f in os.listdir(bgm_dir) if f.lower().endswith(MUSIC_EXTENSIONS)]
+            bgm_path = None
+
+            if music_mode == "manual":
+                if music_file:
+                    requested_path = os.path.join(bgm_dir, music_file)
+                    if os.path.exists(requested_path):
+                        bgm_path = requested_path
+                if bgm_path is None and bgm_files:
+                    bgm_path = os.path.join(bgm_dir, random.choice(bgm_files))
+
+            elif music_mode == "ai_local":
+                from music_finder import pick_local_music_for_script
+                bgm_path = pick_local_music_for_script(script_text, bgm_dir)
+                if bgm_path is None and bgm_files:
+                    bgm_path = os.path.join(bgm_dir, random.choice(bgm_files))
+
+            if bgm_path:
+                pipeline_status.update({
+                    "step": "render",
+                    "progress": 50,
+                    "message": f"Đang render video... (BGM: {os.path.basename(bgm_path)})",
+                })
+            else:
+                pipeline_status.update({
+                    "step": "render",
+                    "progress": 50,
+                    "message": "Đang render video... (không có BGM)",
+                })
 
             final_video = make_video(
                 audio_path=audio_path,
@@ -321,6 +610,11 @@ def api_pipeline_start():
                 style=style,
                 position=position,
                 bgm_path=bgm_path,
+                bgm_start_sec=music_offset_sec,
+                bgm_volume=music_volume,
+                image_dir=image_dir,
+                visual_mode=visual_mode,
+                uploaded_images=uploaded_images,
             )
 
             pipeline_status.update({
@@ -382,6 +676,7 @@ if __name__ == "__main__":
     os.makedirs("output", exist_ok=True)
     os.makedirs("backgrounds", exist_ok=True)
     os.makedirs("audio_bg", exist_ok=True)
+    os.makedirs(UPLOADED_IMAGE_DIR, exist_ok=True)
 
     print("🎬 VideoMaker Pro - Web Server")
     print("=" * 40)

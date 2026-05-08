@@ -175,6 +175,64 @@ input[type=range]{accent-color:#7c3aed;}
               <button data-pos="bottom" onclick="setPos(this)" class="py-2 text-xs rounded-lg bg-purple-500/20 text-white font-bold active-pos">Dưới</button>
             </div>
           </div>
+
+          <div>
+            <label class="text-sm text-[#958da1] mb-1 block">Nguồn hình ảnh chính</label>
+            <select id="visualMode" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-purple-500">
+              <option value="pexels" selected>Pexels/background mặc định</option>
+              <option value="mix">Kết hợp ảnh upload + Pexels/background</option>
+              <option value="uploaded">Chỉ dùng ảnh upload</option>
+            </select>
+          </div>
+
+          <div class="glass rounded-xl p-3 border border-white/10">
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <p class="text-sm font-semibold">Ảnh cho Studio</p>
+              <button onclick="openImagePicker()" class="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg transition">
+                + Thêm ảnh
+              </button>
+            </div>
+            <input id="imageUploadInput" type="file" accept="image/*" multiple class="hidden">
+            <p class="text-[11px] text-[#958da1] mb-2">Nếu không upload ảnh, hệ thống sẽ dùng Pexels/background như mặc định.</p>
+            <div id="uploadedImageList" class="max-h-44 overflow-y-auto flex flex-col gap-1.5 text-xs text-[#958da1]"></div>
+          </div>
+
+          <div class="glass rounded-xl p-3 border border-white/10">
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <p class="text-sm font-semibold">Thư viện nhạc</p>
+              <button onclick="openMusicPicker()" class="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg transition">
+                + Thêm nhạc
+              </button>
+            </div>
+            <input id="musicUploadInput" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm" multiple class="hidden">
+            <div class="mb-2">
+              <label for="musicMode" class="text-[11px] text-[#958da1] block mb-1">Nguồn nhạc</label>
+              <select id="musicMode" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-purple-500">
+                <option value="manual" selected>Dùng nhạc thư viện (upload/sẵn có)</option>
+                <option value="ai_local">AI chọn từ thư viện nhạc có sẵn</option>
+              </select>
+            </div>
+            <div class="mb-2">
+              <label for="musicStartSec" class="text-[11px] text-[#958da1] block mb-1">Bắt đầu nhạc từ phút:giây (mm:ss)</label>
+              <input id="musicStartSec" type="text" value="00:00" placeholder="00:30" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-purple-500" />
+            </div>
+            <div class="mb-2">
+              <div class="flex items-center justify-between mb-1">
+                <label for="musicVolumeSlider" class="text-[11px] text-[#958da1]">Âm lượng nhạc nền</label>
+                <span id="musicVolumeValue" class="text-[11px] text-purple-300">22%</span>
+              </div>
+              <input id="musicVolumeSlider" type="range" min="0" max="100" step="1" value="22" class="w-full h-1.5 bg-white/10 rounded-lg" />
+            </div>
+            <div class="mb-2 grid grid-cols-2 gap-2">
+              <button onclick="previewSelectedMusic()" class="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg transition border border-white/10">
+                Nghe thử từ mốc
+              </button>
+              <button onclick="stopMusicPreview()" class="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg transition border border-white/10">
+                Dừng nghe thử
+              </button>
+            </div>
+            <div id="musicLibraryList" class="max-h-44 overflow-y-auto flex flex-col gap-1.5 text-xs text-[#958da1]"></div>
+          </div>
         </div>
       </section>
 

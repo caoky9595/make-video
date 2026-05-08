@@ -2,7 +2,8 @@
  * VideoMaker Pro - Frontend Logic
  * Kết nối giao diện web với Flask API backend
  */
-const API = 'http://localhost:5000/api';
+// Use same-origin API to avoid hardcoded-port conflicts (e.g. AirPlay on :5000).
+const API = '/api';
 
 // ============================================================
 // VOICES
@@ -11,6 +12,43 @@ let selectedVoice = 'hoaimy';
 let voicesData = [];
 let selectedVideos = [];
 let allVideos = [];
+let uploadedImages = [];
+let musicLibrary = [];
+let selectedMusicFile = '';
+let currentMusicPreview = null;
+
+function parseTimeToSeconds(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return 0;
+
+  // Support plain seconds: "75" -> 75s
+  if (/^\d+(\.\d+)?$/.test(value)) {
+    return Math.max(0, Number(value));
+  }
+
+  // Support mm:ss and hh:mm:ss
+  const parts = value.split(':').map((x) => x.trim());
+  if (parts.some((x) => x === '' || !/^\d+$/.test(x))) {
+    return NaN;
+  }
+
+  if (parts.length === 2) {
+    const mm = Number(parts[0]);
+    const ss = Number(parts[1]);
+    if (ss >= 60) return NaN;
+    return mm * 60 + ss;
+  }
+
+  if (parts.length === 3) {
+    const hh = Number(parts[0]);
+    const mm = Number(parts[1]);
+    const ss = Number(parts[2]);
+    if (mm >= 60 || ss >= 60) return NaN;
+    return hh * 3600 + mm * 60 + ss;
+  }
+
+  return NaN;
+}
 
 async function loadVoices() {
   try {
@@ -145,6 +183,29 @@ async function startPipeline() {
   let position = 'bottom';
   posEls.forEach(el => { if (el.classList.contains('bg-purple-500/20') || el.classList.contains('active-pos')) position = el.dataset.pos; });
 
+  const visualModeEl = document.getElementById('visualMode');
+  const visualMode = visualModeEl ? visualModeEl.value : 'pexels';
+  if (visualMode === 'uploaded' && uploadedImages.length === 0) {
+    showToast('❌ Bạn chọn chỉ dùng ảnh upload nhưng chưa thêm ảnh nào.');
+    return;
+  }
+
+  const startSecEl = document.getElementById('musicStartSec');
+  const musicOffsetSec = startSecEl ? parseTimeToSeconds(startSecEl.value) : 0;
+  const musicModeEl = document.getElementById('musicMode');
+  const musicMode = musicModeEl ? musicModeEl.value : 'manual';
+  const musicVolumeEl = document.getElementById('musicVolumeSlider');
+  const musicVolume = musicVolumeEl ? Math.min(1, Math.max(0, Number(musicVolumeEl.value || 22) / 100)) : 0.22;
+
+  if (!Number.isFinite(musicOffsetSec)) {
+    showToast('❌ Thời gian nhạc không hợp lệ. Dùng định dạng mm:ss (VD: 01:30).');
+    return;
+  }
+
+  if (musicMode === 'manual' && !selectedMusicFile && !musicLibrary.length) {
+    showToast('ℹ️ Chưa có nhạc thư viện, video sẽ render không có BGM.');
+  }
+
   showToast('🚀 Bắt đầu pipeline...');
   const pContainer = document.getElementById('progressContainer');
   const vContainer = document.getElementById('videoPreviewContainer');
@@ -160,7 +221,18 @@ async function startPipeline() {
   try {
     const r = await fetch(`${API}/pipeline/start`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ voice: selectedVoice, rate, style, position })
+      body: JSON.stringify({
+        voice: selectedVoice,
+        rate,
+        style,
+        position,
+        visual_mode: visualMode,
+        uploaded_images: uploadedImages.map(x => x.name),
+        music_file: selectedMusicFile || null,
+        music_offset_sec: Number.isFinite(musicOffsetSec) ? musicOffsetSec : 0,
+        music_volume: Number.isFinite(musicVolume) ? musicVolume : 0.22,
+        music_mode: musicMode,
+      })
     });
     const d = await r.json();
     if (d.error) { showToast('❌ ' + d.error); return; }
@@ -470,6 +542,243 @@ async function loadBackgrounds() {
   } catch(e) {}
 }
 
+async function loadUploadedImages() {
+  try {
+    const r = await fetch(`${API}/images`);
+    uploadedImages = await r.json();
+    renderUploadedImages();
+  } catch (e) {
+    uploadedImages = [];
+    renderUploadedImages();
+  }
+}
+
+function renderUploadedImages() {
+  const el = document.getElementById('uploadedImageList');
+  if (!el) return;
+
+  if (!uploadedImages.length) {
+    el.innerHTML = '<p class="text-[11px] text-[#958da1]">Chưa có ảnh upload.</p>';
+    return;
+  }
+
+  el.innerHTML = '';
+  uploadedImages.forEach((img) => {
+    const item = document.createElement('div');
+    item.className = 'flex items-center gap-2 bg-white/5 rounded-lg px-2 py-1.5';
+    item.innerHTML = `
+      <img src="/api/file/${img.path}" class="w-8 h-8 rounded object-cover border border-white/10" alt="${img.name}">
+      <div class="flex-1 min-w-0">
+        <p class="truncate text-[#e8dfee]">${img.name}</p>
+        <p class="text-[10px] text-[#958da1]">${img.size_mb} MB</p>
+      </div>
+      <button class="text-red-400 hover:text-red-300 text-[11px]" data-name="${img.name}">Xóa</button>
+    `;
+
+    const deleteBtn = item.querySelector('button[data-name]');
+    if (deleteBtn) {
+      deleteBtn.onclick = () => deleteUploadedImage(img.name);
+    }
+    el.appendChild(item);
+  });
+}
+
+function openImagePicker() {
+  const input = document.getElementById('imageUploadInput');
+  if (input) input.click();
+}
+
+async function handleImageUpload(event) {
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+
+  const formData = new FormData();
+  files.forEach((f) => formData.append('images', f));
+
+  showToast('⏫ Đang upload ảnh...');
+  try {
+    const r = await fetch(`${API}/images/upload`, { method: 'POST', body: formData });
+    const d = await r.json();
+    if (!r.ok || d.error) {
+      throw new Error(d.error || 'Upload thất bại');
+    }
+    showToast(`✅ Upload thành công ${d.uploaded.length} ảnh`);
+    await loadUploadedImages();
+  } catch (e) {
+    showToast('❌ ' + e.message);
+  } finally {
+    event.target.value = '';
+  }
+}
+
+async function deleteUploadedImage(name) {
+  try {
+    const r = await fetch(`${API}/images/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filenames: [name] }),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'Xóa ảnh thất bại');
+    showToast('🗑️ Đã xóa ảnh');
+    await loadUploadedImages();
+  } catch (e) {
+    showToast('❌ ' + e.message);
+  }
+}
+
+async function loadMusicLibrary() {
+  try {
+    const r = await fetch(`${API}/music`);
+    musicLibrary = await r.json();
+    if (selectedMusicFile && !musicLibrary.some(x => x.name === selectedMusicFile)) {
+      selectedMusicFile = '';
+    }
+    renderMusicLibrary();
+  } catch (e) {
+    musicLibrary = [];
+    selectedMusicFile = '';
+    renderMusicLibrary();
+  }
+}
+
+function renderMusicLibrary() {
+  const el = document.getElementById('musicLibraryList');
+  if (!el) return;
+
+  if (!musicLibrary.length) {
+    el.innerHTML = '<p class="text-[11px] text-[#958da1]">Chưa có file nhạc. Bạn có thể upload MP3/WAV/OGG/M4A...</p>';
+    return;
+  }
+
+  el.innerHTML = '';
+  musicLibrary.forEach((track) => {
+    const selected = selectedMusicFile === track.name;
+    const item = document.createElement('div');
+    item.className = `flex items-center gap-2 rounded-lg px-2 py-1.5 border ${selected ? 'bg-purple-500/10 border-purple-400/40' : 'bg-white/5 border-white/10'}`;
+    item.innerHTML = `
+      <button class="w-5 h-5 rounded-full border text-[10px] flex items-center justify-center ${selected ? 'border-purple-300 text-purple-200' : 'border-white/30 text-transparent'}" data-select="${track.name}">●</button>
+      <div class="flex-1 min-w-0">
+        <p class="truncate text-[#e8dfee]">${track.name}</p>
+        <p class="text-[10px] text-[#958da1]">${track.size_mb} MB</p>
+      </div>
+      <button class="text-red-400 hover:text-red-300 text-[11px]" data-delete="${track.name}">Xóa</button>
+    `;
+
+    const selectBtn = item.querySelector('button[data-select]');
+    const deleteBtn = item.querySelector('button[data-delete]');
+    if (selectBtn) selectBtn.onclick = () => toggleSelectMusic(track.name);
+    if (deleteBtn) deleteBtn.onclick = () => deleteMusicFile(track.name);
+    el.appendChild(item);
+  });
+}
+
+function toggleSelectMusic(name) {
+  stopMusicPreview();
+  selectedMusicFile = selectedMusicFile === name ? '' : name;
+  renderMusicLibrary();
+}
+
+function openMusicPicker() {
+  const input = document.getElementById('musicUploadInput');
+  if (input) input.click();
+}
+
+async function handleMusicUpload(event) {
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+
+  const formData = new FormData();
+  files.forEach((f) => formData.append('tracks', f));
+
+  showToast('⏫ Đang upload nhạc...');
+  try {
+    const r = await fetch(`${API}/music/upload`, { method: 'POST', body: formData });
+    const d = await r.json();
+    if (!r.ok || d.error) {
+      throw new Error(d.error || 'Upload nhạc thất bại');
+    }
+    if (d.uploaded && d.uploaded.length) {
+      selectedMusicFile = d.uploaded[0];
+    }
+    showToast(`✅ Upload thành công ${d.uploaded.length} file nhạc`);
+    await loadMusicLibrary();
+  } catch (e) {
+    showToast('❌ ' + e.message);
+  } finally {
+    event.target.value = '';
+  }
+}
+
+async function deleteMusicFile(name) {
+  try {
+    if (selectedMusicFile === name) {
+      stopMusicPreview();
+    }
+    const r = await fetch(`${API}/music/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filenames: [name] }),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'Xóa nhạc thất bại');
+    if (selectedMusicFile === name) {
+      selectedMusicFile = '';
+    }
+    showToast('🗑️ Đã xóa nhạc');
+    await loadMusicLibrary();
+  } catch (e) {
+    showToast('❌ ' + e.message);
+  }
+}
+
+async function previewSelectedMusic() {
+  if (!musicLibrary.length) {
+    showToast('❌ Chưa có nhạc trong thư viện để nghe thử.');
+    return;
+  }
+
+  const targetTrack = selectedMusicFile || musicLibrary[0].name;
+  if (!selectedMusicFile) {
+    selectedMusicFile = targetTrack;
+    renderMusicLibrary();
+  }
+
+  const startSecEl = document.getElementById('musicStartSec');
+  const offsetSec = startSecEl ? parseTimeToSeconds(startSecEl.value) : 0;
+  if (!Number.isFinite(offsetSec)) {
+    showToast('❌ Mốc thời gian không hợp lệ. Dùng mm:ss (VD: 01:30).');
+    return;
+  }
+
+  stopMusicPreview();
+  const audioUrl = `/api/file/audio_bg/${encodeURIComponent(targetTrack)}`;
+  const player = new Audio(audioUrl);
+  currentMusicPreview = player;
+
+  player.addEventListener('loadedmetadata', async () => {
+    const safeOffset = Math.max(0, Math.min(offsetSec, Math.max(0, (player.duration || 0) - 0.1)));
+    player.currentTime = safeOffset;
+    try {
+      await player.play();
+      showToast(`🎵 Đang nghe thử: ${targetTrack} từ ${startSecEl ? startSecEl.value : '00:00'}`);
+    } catch (err) {
+      showToast('❌ Không thể phát nhạc preview.');
+    }
+  }, { once: true });
+
+  player.addEventListener('ended', () => {
+    currentMusicPreview = null;
+  }, { once: true });
+}
+
+function stopMusicPreview() {
+  if (!currentMusicPreview) return;
+  currentMusicPreview.pause();
+  currentMusicPreview.currentTime = 0;
+  currentMusicPreview = null;
+}
+
 // ============================================================
 // TOAST NOTIFICATION
 // ============================================================
@@ -499,13 +808,26 @@ document.addEventListener('DOMContentLoaded', () => {
   if (savedPage === 'editor') targetNav = navItems[1];
   if (savedPage === 'settings') targetNav = navItems[2];
   showPage(savedPage, targetNav);
+  window.addEventListener('beforeunload', stopMusicPreview);
 
   loadVoices();
   loadScript();
   loadStats();
   loadOutputs();
   loadBackgrounds();
-  
+  loadUploadedImages();
+  loadMusicLibrary();
+
+  const imageInput = document.getElementById('imageUploadInput');
+  if (imageInput) {
+    imageInput.addEventListener('change', handleImageUpload);
+  }
+
+  const musicInput = document.getElementById('musicUploadInput');
+  if (musicInput) {
+    musicInput.addEventListener('change', handleMusicUpload);
+  }
+
   // Auto-save script on typing
   const ta = document.getElementById('scriptArea');
   if (ta) {
@@ -524,6 +846,14 @@ document.addEventListener('DOMContentLoaded', () => {
     slider.addEventListener('input', () => {
       const v = parseFloat(slider.value);
       speedLabel.textContent = v === 0 ? '1.0x' : v > 0 ? `${(1+v*0.2).toFixed(1)}x` : `${(1+v*0.2).toFixed(1)}x`;
+    });
+  }
+
+  const musicVolumeSlider = document.getElementById('musicVolumeSlider');
+  const musicVolumeValue = document.getElementById('musicVolumeValue');
+  if (musicVolumeSlider && musicVolumeValue) {
+    musicVolumeSlider.addEventListener('input', () => {
+      musicVolumeValue.textContent = `${musicVolumeSlider.value}%`;
     });
   }
 });
