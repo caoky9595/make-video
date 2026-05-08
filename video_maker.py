@@ -31,6 +31,7 @@ from moviepy.editor import (
     concatenate_videoclips,
     afx
 )
+from stickman_engine import StickmanEngine
 
 # ============================================================
 # CẤU HÌNH VIDEO (Chỉnh sửa tại đây nếu muốn)
@@ -388,15 +389,10 @@ def make_video(
     bgm_volume: float = BGM_VOLUME,
     visual_mode: str = "pexels",
     uploaded_images=None,
+    video_mode: str = "realistic",
 ):
     """
     Hàm chính: Ghép audio + video nền + subtitle thành video TikTok hoàn chỉnh.
-
-    Args:
-        audio_path: Đường dẫn file audio (.mp3)
-        srt_path: Đường dẫn file subtitle (.srt)
-        bg_dir: Thư mục chứa video nền
-        output_path: Đường dẫn file video đầu ra
     """
     print("\n🎬 Bắt đầu tạo video...")
 
@@ -436,20 +432,27 @@ def make_video(
             print(f"  [Audio] ⚠️ Failed to mix BGM: {e}")
 
     # 2. Chuẩn bị video nền
-    visual_sources = _collect_visual_sources(
-        bg_dir=bg_dir,
-        image_dir=image_dir,
-        visual_mode=visual_mode,
-        uploaded_images=uploaded_images,
-    )
-    if not visual_sources:
-        raise FileNotFoundError(
-            "Không có nguồn visual hợp lệ. Hãy thêm video vào backgrounds/ hoặc ảnh vào uploaded_images/."
+    if video_mode == "stickman":
+        print("  [Video] Mode: Stickman Meme Animation")
+        engine = StickmanEngine()
+        # Tạo một background clip trắng hoàn toàn, sau đó chúng sẽ vẽ stickman lên từng frame
+        bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(255, 255, 255), duration=duration)
+    else:
+        print(f"  [Video] Mode: Realistic ({visual_mode})")
+        visual_sources = _collect_visual_sources(
+            bg_dir=bg_dir,
+            image_dir=image_dir,
+            visual_mode=visual_mode,
+            uploaded_images=uploaded_images,
         )
-
-    bg_path = random.choice(visual_sources)
-    print(f"  [Background] Selected: {os.path.basename(bg_path)}")
-    bg_clip = _prepare_visual_background(bg_path, duration)
+        if not visual_sources:
+            # Fallback nếu không có visual nào
+            print("  [Video] ⚠️ No visual sources found, using white background.")
+            bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(255, 255, 255), duration=duration)
+        else:
+            bg_path = random.choice(visual_sources)
+            print(f"  [Background] Selected: {os.path.basename(bg_path)}")
+            bg_clip = _prepare_visual_background(bg_path, duration)
 
     # 3. Parse subtitles từ SRT
     subs = _parse_srt(srt_path)
@@ -500,27 +503,75 @@ def make_video(
         return frame_cache[key]
 
     # 5. Tạo clip kết hợp: background + overlay tối + subtitle
+    # 5. Tạo clip kết hợp: background + overlay tối + subtitle
     def make_combined_frame(get_frame, t):
-        bg_frame = get_frame(t).astype(np.float32)
-        # Phủ overlay tối
-        bg_frame = bg_frame * (1 - OVERLAY_OPACITY)
+        # Mặc định
+        curr_offset_x = 0
+        curr_offset_y = 0
+        curr_scale = 1.0
+        shake_intensity = 0
         
-        # Tìm subtitle phù hợp với thời điểm t
-        sub_rgba = None
+        # Tìm subtitle và cảm xúc để điều chỉnh camera/acting
+        active_sub_idx = -1
+        active_word_idx = -1
         for i, sub in enumerate(subs):
             if sub["start"] <= t <= sub["end"]:
-                active_word_index = -1
+                active_sub_idx = i
                 for w_idx, w in enumerate(sub["words"]):
                     if w["start"] <= t <= w["end"]:
-                        active_word_index = w_idx
+                        active_word_idx = w_idx
                         break
-                sub_rgba = get_text_frame(i, active_word_index)
                 break
+        
+        if video_mode == "stickman":
+            if active_sub_idx != -1:
+                sub_text = subs[active_sub_idx]["text"]
+                emotion = engine._analyze_emotion(sub_text)
+                
+                # Logic Acting & Camera
+                if emotion == "angry" or emotion == "surprised":
+                    curr_scale = 1.3 # Zoom nhẹ
+                    curr_offset_y = 100 # Đẩy xuống để thấy mặt rõ hơn
+                    shake_intensity = 5 # Rung nhẹ
+                elif emotion == "sad":
+                    curr_scale = 1.1
+                    curr_offset_y = 50
+                elif any(w in sub_text.lower() for w in ["chạy", "nhanh", "flash", "phóng"]):
+                    # Di chuyển nhân vật từ trái sang phải dựa trên thời gian trong sub
+                    sub_duration = subs[active_sub_idx]["end"] - subs[active_sub_idx]["start"]
+                    progress = (t - subs[active_sub_idx]["start"]) / sub_duration
+                    curr_offset_x = -600 + (progress * 1200) # Chạy ngang
+                    shake_intensity = 10 # Rung mạnh khi chạy
+                
+                # Thêm độ rung ngẫu nhiên nếu có shake_intensity
+                if shake_intensity > 0:
+                    curr_offset_x += random.uniform(-shake_intensity, shake_intensity)
+                    curr_offset_y += random.uniform(-shake_intensity, shake_intensity)
+                
+                # Render Stickman Frame
+                bg_frame = engine.render_frame_to_array(
+                    sub_text, VIDEO_WIDTH, VIDEO_HEIGHT, 
+                    t=t, seed=active_sub_idx,
+                    offset_x=curr_offset_x, offset_y=curr_offset_y, scale=curr_scale
+                ).astype(np.float32)
+            else:
+                # Nền trắng nếu không có sub
+                bg_frame = np.full((VIDEO_HEIGHT, VIDEO_WIDTH, 3), 255, dtype=np.float32)
+        else:
+            bg_frame = get_frame(t).astype(np.float32)
+            # Phủ overlay tối (chỉ cho Realistic mode)
+            bg_frame = bg_frame * (1 - OVERLAY_OPACITY)
+        
+        # Subtitle Overlay
+        sub_rgba = None
+        if active_sub_idx != -1:
+            sub_rgba = get_text_frame(active_sub_idx, active_word_idx)
                 
         if sub_rgba is not None:
             alpha = sub_rgba[:, :, 3:4].astype(np.float32) / 255.0
             sub_rgb = sub_rgba[:, :, :3].astype(np.float32)
             bg_frame = bg_frame * (1 - alpha) + sub_rgb * alpha
+            
         return bg_frame.clip(0, 255).astype(np.uint8)
 
     combined_clip = bg_clip.fl(make_combined_frame).set_duration(duration)

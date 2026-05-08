@@ -54,30 +54,38 @@ async function loadVoices() {
   try {
     const r = await fetch(`${API}/voices`);
     voicesData = await r.json();
-    renderVoiceCards();
+    renderVoiceSelect();
   } catch(e) { console.log('API offline'); }
 }
 
-function renderVoiceCards() {
-  const container = document.getElementById('voiceGrid');
+function renderVoiceSelect() {
+  const container = document.getElementById('voiceSelect');
   if (!container) return;
   container.innerHTML = '';
-  voicesData.forEach(v => {
-    const active = v.id === selectedVoice;
-    const card = document.createElement('div');
-    card.className = `glass-card rounded-xl p-3 flex flex-col items-center gap-2 cursor-pointer transition-all ${active ? 'border-2 border-purple-500 shadow-[0_0_20px_rgba(124,58,237,0.3)]' : 'hover:border-white/20'}`;
-    card.innerHTML = `
-      <div class="w-10 h-10 rounded-full ${v.gender==='Nữ'?'bg-purple-500/20':'bg-blue-500/20'} flex items-center justify-center">
-        <span class="material-symbols-outlined ${v.gender==='Nữ'?'text-purple-400':'text-blue-400'}">${v.gender==='Nữ'?'face_3':'face'}</span>
-      </div>
-      <span class="text-xs font-bold">${v.name}</span>
-      <div class="flex gap-1 flex-wrap justify-center">
-        <span class="text-[9px] px-1.5 py-0.5 bg-white/5 rounded-md">${v.gender} ${v.region}</span>
-        <span class="text-[9px] px-1.5 py-0.5 ${v.engine==='FPT.AI'?'bg-purple-500/20 text-purple-300':'bg-green-500/20 text-green-300'} rounded-md">${v.engine}</span>
-      </div>`;
-    card.onclick = () => { selectedVoice = v.id; renderVoiceCards(); showToast(`Đã chọn: ${v.name}`); };
-    container.appendChild(card);
+  
+  // Group voices by engine for better UX
+  const engines = [...new Set(voicesData.map(v => v.engine))];
+  
+  engines.forEach(engine => {
+    const group = document.createElement('optgroup');
+    group.label = engine;
+    
+    const engineVoices = voicesData.filter(v => v.engine === engine);
+    engineVoices.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.id;
+      opt.textContent = `${v.name} (${v.gender} - ${v.region})`;
+      if (v.id === selectedVoice) opt.selected = true;
+      group.appendChild(opt);
+    });
+    container.appendChild(group);
   });
+
+  container.onchange = (e) => {
+    selectedVoice = e.target.value;
+    const v = voicesData.find(x => x.id === selectedVoice);
+    if (v) showToast(`Đã chọn: ${v.name}`);
+  };
 }
 
 async function previewVoice(voiceId) {
@@ -154,11 +162,27 @@ async function generateScript() {
   }
 }
 
+function formatDuration(seconds) {
+  if (seconds <= 0) return '0s';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  
+  let res = '';
+  if (h > 0) res += `${h}h `;
+  if (m > 0) res += `${m}p `;
+  if (s > 0 || res === '') res += `${s}s`;
+  return res.trim();
+}
+
 function updateCharCount(count) {
   const el = document.getElementById('charCount');
-  if (el) el.textContent = `${count} ký tự`;
+  if (el) el.textContent = count;
   const timeEl = document.getElementById('estTime');
-  if (timeEl) timeEl.textContent = `~${Math.round(count/17)}s`;
+  if (timeEl) {
+    const totalSeconds = Math.round(count / 17);
+    timeEl.textContent = `~${formatDuration(totalSeconds)}`;
+  }
 }
 
 // ============================================================
@@ -178,6 +202,8 @@ async function startPipeline() {
   
   const styleEl = document.getElementById('subtitleStyle');
   const style = styleEl ? parseInt(styleEl.value) : 1;
+  const modeEl = document.getElementById('videoMode');
+  const video_mode = modeEl ? modeEl.value : 'realistic';
 
   const posEls = document.querySelectorAll('[data-pos]');
   let position = 'bottom';
@@ -186,7 +212,7 @@ async function startPipeline() {
   const visualModeEl = document.getElementById('visualMode');
   const visualMode = visualModeEl ? visualModeEl.value : 'pexels';
   if (visualMode === 'uploaded' && uploadedImages.length === 0) {
-    showToast('❌ Bạn chọn chỉ dùng ảnh upload nhưng chưa thêm ảnh nào.');
+    showToast('❌ Bạn chọn chỉ dùng Media upload nhưng chưa thêm file nào.');
     return;
   }
 
@@ -232,6 +258,7 @@ async function startPipeline() {
         music_offset_sec: Number.isFinite(musicOffsetSec) ? musicOffsetSec : 0,
         music_volume: Number.isFinite(musicVolume) ? musicVolume : 0.22,
         music_mode: musicMode,
+        video_mode: video_mode,
       })
     });
     const d = await r.json();
@@ -558,21 +585,28 @@ function renderUploadedImages() {
   if (!el) return;
 
   if (!uploadedImages.length) {
-    el.innerHTML = '<p class="text-[11px] text-[#958da1]">Chưa có ảnh upload.</p>';
+    el.innerHTML = '<p class="text-[11px] text-[#958da1]">Chưa có file upload.</p>';
     return;
   }
 
+  const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
+
   el.innerHTML = '';
   uploadedImages.forEach((img) => {
+    const ext = img.name.slice((img.name.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase();
+    const isImage = IMAGE_EXTS.includes('.' + ext);
+
     const item = document.createElement('div');
     item.className = 'flex items-center gap-2 bg-white/5 rounded-lg px-2 py-1.5';
     item.innerHTML = `
-      <img src="/api/file/${img.path}" class="w-8 h-8 rounded object-cover border border-white/10" alt="${img.name}">
-      <div class="flex-1 min-w-0">
-        <p class="truncate text-[#e8dfee]">${img.name}</p>
-        <p class="text-[10px] text-[#958da1]">${img.size_mb} MB</p>
+      <div class="w-8 h-8 rounded bg-black/20 flex items-center justify-center border border-white/10 shrink-0 overflow-hidden">
+        ${isImage ? `<img src="/api/file/${img.path}" class="w-full h-full object-cover">` : `<span class="material-symbols-outlined text-sm opacity-50">movie</span>`}
       </div>
-      <button class="text-red-400 hover:text-red-300 text-[11px]" data-name="${img.name}">Xóa</button>
+      <div class="flex-1 min-w-0">
+        <p class="truncate text-[#e8dfee] text-[11px]">${img.name}</p>
+        <p class="text-[9px] text-[#958da1] uppercase">${isImage ? 'Ảnh' : 'Video'} • ${img.size_mb} MB</p>
+      </div>
+      <button class="text-red-400 hover:text-red-300 text-[11px] px-1" data-name="${img.name}">Xóa</button>
     `;
 
     const deleteBtn = item.querySelector('button[data-name]');
@@ -595,14 +629,14 @@ async function handleImageUpload(event) {
   const formData = new FormData();
   files.forEach((f) => formData.append('images', f));
 
-  showToast('⏫ Đang upload ảnh...');
+  showToast('⏫ Đang upload Media...');
   try {
     const r = await fetch(`${API}/images/upload`, { method: 'POST', body: formData });
     const d = await r.json();
     if (!r.ok || d.error) {
       throw new Error(d.error || 'Upload thất bại');
     }
-    showToast(`✅ Upload thành công ${d.uploaded.length} ảnh`);
+    showToast(`✅ Upload thành công ${d.uploaded.length} file`);
     await loadUploadedImages();
   } catch (e) {
     showToast('❌ ' + e.message);
@@ -619,8 +653,8 @@ async function deleteUploadedImage(name) {
       body: JSON.stringify({ filenames: [name] }),
     });
     const d = await r.json();
-    if (!r.ok || d.error) throw new Error(d.error || 'Xóa ảnh thất bại');
-    showToast('🗑️ Đã xóa ảnh');
+    if (!r.ok || d.error) throw new Error(d.error || 'Xóa Media thất bại');
+    showToast('🗑️ Đã xóa Media');
     await loadUploadedImages();
   } catch (e) {
     showToast('❌ ' + e.message);
@@ -779,6 +813,14 @@ function stopMusicPreview() {
   currentMusicPreview = null;
 }
 
+function switchResourceTab(tabName, btn) {
+  document.querySelectorAll('.resource-content').forEach(el => el.classList.add('hidden'));
+  const target = document.getElementById(`tab-${tabName}`);
+  if (target) target.classList.remove('hidden');
+  document.querySelectorAll('.resource-tab').forEach(el => el.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
 // ============================================================
 // TOAST NOTIFICATION
 // ============================================================
@@ -856,4 +898,8 @@ document.addEventListener('DOMContentLoaded', () => {
       musicVolumeValue.textContent = `${musicVolumeSlider.value}%`;
     });
   }
+
+  // Init first resource tab
+  const firstTab = document.querySelector('.resource-tab');
+  if (firstTab) firstTab.click();
 });

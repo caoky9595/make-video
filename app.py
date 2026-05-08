@@ -27,6 +27,8 @@ CORS(app)
 
 UPLOADED_IMAGE_DIR = "uploaded_images"
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+STUDIO_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
 MUSIC_DIR = "audio_bg"
 MUSIC_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm")
 
@@ -212,13 +214,18 @@ def api_script_generate():
         return jsonify({"error": "Chưa cấu hình GEMINI_API_KEY trong file .env"}), 400
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
-    prompt = f"""Bạn là một chuyên gia sáng tạo nội dung TikTok. Hãy viết một kịch bản video ngắn (khoảng 30-45 giây) dựa trên ý tưởng sau: "{idea}".
+    prompt = f"""Bạn là một chuyên gia sáng tạo nội dung TikTok triệu view, đặc biệt giỏi trong việc kể chuyện hài hước, châm biếm và viral.
     
-    Yêu cầu:
-    - Bắt đầu bằng một Hook gây sự chú ý cực mạnh trong 3 giây đầu.
-    - Lời thoại phải tự nhiên, cực kỳ lôi cuốn, hợp với Gen Z.
-    - Kết thúc bằng một Call to Action (CTA) kêu gọi follow/comment.
-    - CHỈ TRẢ VỀ nội dung lời thoại (không bao gồm mô tả cảnh quay, góc máy, nhạc...). Văn bản dùng để đọc bằng AI Voice nên hãy trình bày liền mạch, xuống dòng cho mỗi câu.
+    Hãy xử lý yêu cầu sau của người dùng: "{idea}"
+    
+    Yêu cầu quan trọng:
+    1. Nếu người dùng đưa ra một LỆNH (ví dụ: "Viết kịch bản về X", "Hãy kể chuyện Y"), hãy thực hiện lệnh đó một cách sáng tạo nhất.
+    2. Nếu người dùng chỉ đưa ra một CHỦ ĐỀ ngắn (ví dụ: "giảm cân", "người yêu cũ"), hãy tự xây dựng một kịch bản lôi cuốn xung quanh chủ đề đó.
+    3. Nếu kịch bản mang tính hài hước hoặc châm biếm, hãy ưu tiên phong cách "Meme Stickman" (hơi bựa, thẳng thắn, dùng các meme huyền thoại để minh họa).
+    4. Bắt đầu bằng một Hook gây sự chú ý cực mạnh trong 3 giây đầu.
+    5. Lời thoại phải tự nhiên, lôi cuốn, hợp với Gen Z.
+    6. Kết thúc bằng một Call to Action (CTA) kêu gọi follow/comment.
+    7. CHỈ TRẢ VỀ nội dung lời thoại (không bao gồm mô tả cảnh quay, góc máy, nhạc...). Văn bản dùng để đọc bằng AI Voice nên hãy trình bày liền mạch, xuống dòng cho mỗi câu.
     """
     
     import urllib.request
@@ -260,16 +267,16 @@ def api_backgrounds():
 
 @app.route("/api/images", methods=["GET"])
 def api_images():
-    """Trả về danh sách ảnh đã upload cho Studio."""
-    return jsonify(_list_media(UPLOADED_IMAGE_DIR, IMAGE_EXTENSIONS))
+    """Trả về danh sách tài nguyên (ảnh/video) đã upload cho Studio."""
+    return jsonify(_list_media(UPLOADED_IMAGE_DIR, STUDIO_EXTENSIONS))
 
 
 @app.route("/api/images/upload", methods=["POST"])
 def api_images_upload():
-    """Upload một hoặc nhiều ảnh vào thư viện Studio."""
+    """Upload một hoặc nhiều ảnh/video vào thư viện Studio."""
     files = request.files.getlist("images")
     if not files:
-        return jsonify({"error": "Không có file ảnh nào được gửi lên!"}), 400
+        return jsonify({"error": "Không có file nào được gửi lên!"}), 400
 
     os.makedirs(UPLOADED_IMAGE_DIR, exist_ok=True)
     uploaded = []
@@ -282,7 +289,7 @@ def api_images_upload():
 
         safe_name = secure_filename(original_name)
         ext = os.path.splitext(safe_name)[1].lower()
-        if ext not in IMAGE_EXTENSIONS:
+        if ext not in STUDIO_EXTENSIONS:
             rejected.append(original_name)
             continue
 
@@ -293,7 +300,7 @@ def api_images_upload():
 
     if not uploaded:
         return jsonify({
-            "error": "Không có file hợp lệ. Chỉ hỗ trợ JPG/JPEG/PNG/WEBP.",
+            "error": "Không có file hợp lệ. Hỗ trợ Ảnh (JPG/PNG/WEBP) và Video (MP4/MOV...).",
             "rejected": rejected,
         }), 400
 
@@ -314,7 +321,7 @@ def api_images_delete():
             continue
         safe_name = os.path.basename(name)
         ext = os.path.splitext(safe_name)[1].lower()
-        if ext not in IMAGE_EXTENSIONS:
+        if ext not in STUDIO_EXTENSIONS:
             continue
 
         img_path = os.path.join(UPLOADED_IMAGE_DIR, safe_name)
@@ -484,6 +491,7 @@ def api_pipeline_start():
     music_offset_sec = data.get("music_offset_sec", 0)
     music_volume = data.get("music_volume", 0.22)
     music_mode = data.get("music_mode", "manual")
+    video_mode = data.get("video_mode", "realistic") # New field
     script_file = data.get("script", "script.txt")
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_file = data.get("output", f"output/video_{timestamp}.mp4")
@@ -543,28 +551,34 @@ def api_pipeline_start():
             os.makedirs(bg_dir, exist_ok=True)
             os.makedirs(image_dir, exist_ok=True)
             supported = (".mp4", ".mov", ".avi", ".mkv", ".webm")
-            bg_videos = [f for f in os.listdir(bg_dir) if f.lower().endswith(supported)]
-            studio_images = [f for f in os.listdir(image_dir) if f.lower().endswith(IMAGE_EXTENSIONS)]
-
-            # Nếu user chọn một subset ảnh cụ thể, chỉ dùng subset đó.
-            if uploaded_images:
-                selected = set(uploaded_images)
-                studio_images = [f for f in studio_images if f in selected]
-
-            need_pexels = visual_mode in ("pexels", "mix")
-            if need_pexels and not bg_videos:
-                from bg_finder import find_and_download_background
-                find_and_download_background(script_text, output_dir=bg_dir)
+            bg_videos = []
+            studio_images = []
+            
+            if video_mode == "stickman":
+                print("  [Pipeline] Skipping Pexels download for Stickman mode.")
+            else:
                 bg_videos = [f for f in os.listdir(bg_dir) if f.lower().endswith(supported)]
+                studio_images = [f for f in os.listdir(image_dir) if f.lower().endswith(IMAGE_EXTENSIONS)]
 
-            if visual_mode == "pexels" and not bg_videos:
-                raise FileNotFoundError("Không có video Pexels/background để render.")
+                # Nếu user chọn một subset ảnh cụ thể, chỉ dùng subset đó.
+                if uploaded_images:
+                    selected = set(uploaded_images)
+                    studio_images = [f for f in studio_images if f in selected]
 
-            if visual_mode == "uploaded" and not studio_images:
-                raise FileNotFoundError("Bạn đã chọn 'Chỉ dùng ảnh upload' nhưng chưa có ảnh nào.")
+                need_pexels = visual_mode in ("pexels", "mix")
+                if need_pexels and not bg_videos:
+                    from bg_finder import find_and_download_background
+                    find_and_download_background(script_text, output_dir=bg_dir)
+                    bg_videos = [f for f in os.listdir(bg_dir) if f.lower().endswith(supported)]
 
-            if visual_mode == "mix" and not (bg_videos or studio_images):
-                raise FileNotFoundError("Không tìm thấy ảnh upload hoặc video Pexels/background để render.")
+                if visual_mode == "pexels" and not bg_videos:
+                    raise FileNotFoundError("Không có video Pexels/background để render.")
+
+                if visual_mode == "uploaded" and not studio_images:
+                    raise FileNotFoundError("Bạn đã chọn 'Chỉ dùng ảnh upload' nhưng chưa có ảnh nào.")
+
+                if visual_mode == "mix" and not (bg_videos or studio_images):
+                    raise FileNotFoundError("Không tìm thấy ảnh upload hoặc video Pexels/background để render.")
 
             pipeline_status.update({"step": "render", "progress": 50, "message": "Đang render video..."})
 
@@ -615,6 +629,7 @@ def api_pipeline_start():
                 image_dir=image_dir,
                 visual_mode=visual_mode,
                 uploaded_images=uploaded_images,
+                video_mode=video_mode,
             )
 
             pipeline_status.update({

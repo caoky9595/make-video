@@ -30,7 +30,17 @@ body{background:#0F0F1A;color:#e8dfee;font-family:'Inter',sans-serif;}
 textarea{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.1) transparent;}
 input[type=range]{accent-color:#7c3aed;}
 .progress-glow{background:linear-gradient(135deg,#7c3aed,#a855f7);box-shadow:0 0 10px rgba(124,58,237,0.5);}
-</style>
+    .resource-tab.active {
+      background: rgba(255, 255, 255, 0.05);
+      opacity: 1;
+      color: #a855f7;
+      border-bottom: 2px solid #a855f7;
+    }
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+    .muted { color: #958da1; }
+  </style>
 </head>
 <body class="flex h-screen overflow-hidden">
 
@@ -106,184 +116,208 @@ input[type=range]{accent-color:#7c3aed;}
   </div>
 
   <!-- ==================== PAGE: EDITOR ==================== -->
-  <div class="page flex-1 overflow-hidden w-full" id="page-editor">
+  <div class="page flex-1 overflow-hidden w-full bg-[#0a0a0f]" id="page-editor">
     <div class="flex h-full w-full">
-      <!-- Left: Script -->
-      <section class="flex-[1.2] p-6 flex flex-col gap-4 min-w-[350px]">
-        <div class="flex justify-between items-center">
-          <h2 class="text-xl font-bold">Kịch Bản Video</h2>
-          <div class="flex gap-2">
-            <button onclick="saveScript()" class="text-xs bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center gap-1">
-              <span class="material-symbols-outlined text-sm">save</span>Lưu
-            </button>
-          </div>
+      
+      <!-- COLUMN 1: RESOURCES (Left) -->
+      <aside class="w-[300px] border-r border-white/5 flex flex-col bg-[#12121a]/50">
+        <div class="p-4 border-b border-white/5 flex items-center justify-between">
+          <h3 class="font-bold text-sm flex items-center gap-2">
+            <span class="material-symbols-outlined text-purple-400 text-lg">category</span> Tài nguyên Studio
+          </h3>
         </div>
         
-        <!-- AI Generator -->
-        <div class="glass rounded-xl p-4 flex gap-3 items-start border-purple-500/30">
-          <textarea id="ideaInput" class="flex-1 bg-transparent border border-white/10 rounded-lg px-3 py-2 outline-none resize-none text-sm h-16 placeholder:text-[#958da1]/50 focus:border-purple-500" placeholder="Nhập ý tưởng video của bạn... (VD: 3 mẹo giúp giảm cân không cần ăn kiêng)"></textarea>
-          <button id="btnGenerate" onclick="generateScript()" class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-lg flex flex-col items-center justify-center gap-1 h-16 w-32 transition-all shrink-0">
-            <span class="material-symbols-outlined text-sm">auto_awesome</span> Tạo bằng AI
+        <!-- Resource Tabs -->
+        <div class="flex border-b border-white/5 p-1 bg-black/20">
+          <button onclick="switchResourceTab('media', this)" class="resource-tab active flex-1 py-2 text-[11px] font-bold rounded-md transition-all flex flex-col items-center gap-1 opacity-50">
+            <span class="material-symbols-outlined text-base">gallery_thumbnail</span> Media
+          </button>
+          <button onclick="switchResourceTab('voice', this)" class="resource-tab flex-1 py-2 text-[11px] font-bold rounded-md transition-all flex flex-col items-center gap-1 opacity-50">
+            <span class="material-symbols-outlined text-base">record_voice_over</span> Giọng đọc
+          </button>
+          <button onclick="switchResourceTab('music', this)" class="resource-tab flex-1 py-2 text-[11px] font-bold rounded-md transition-all flex flex-col items-center gap-1 opacity-50">
+            <span class="material-symbols-outlined text-base">music_note</span> Nhạc nền
           </button>
         </div>
 
-        <div class="glass rounded-2xl p-5 flex-1 flex flex-col relative mt-2">
-          <textarea id="scriptArea" class="flex-1 bg-transparent border-none outline-none resize-none text-sm leading-7 font-mono placeholder:text-[#958da1]/50" placeholder="Viết kịch bản video của bạn tại đây hoặc dùng AI tạo kịch bản ở trên..."></textarea>
-          <div class="flex gap-4 text-[11px] text-[#958da1] mt-2">
-            <span class="flex items-center gap-1"><span class="material-symbols-outlined text-xs">text_fields</span><span id="charCount">0 ký tự</span></span>
-            <span class="flex items-center gap-1"><span class="material-symbols-outlined text-xs">timer</span><span id="estTime">~0s</span></span>
-            <span class="flex items-center gap-1 text-green-400"><span class="material-symbols-outlined text-xs">cloud_done</span>Tự động lưu</span>
-          </div>
-        </div>
-        <div class="flex gap-3">
-          <button onclick="startPipeline()" class="glow-btn text-white font-bold py-3 px-8 rounded-xl flex items-center gap-2">
-            <span class="material-symbols-outlined">movie_filter</span>Tạo Video 🎬
-          </button>
-          <button onclick="previewVoice()" class="bg-white/5 border border-white/10 text-white py-3 px-6 rounded-xl hover:bg-white/10 transition flex items-center gap-2">
-            <span class="material-symbols-outlined">headphones</span>Nghe thử giọng
-          </button>
-        </div>
-      </section>
-
-      <!-- Middle: Voice & Settings -->
-      <section class="w-[320px] shrink-0 p-6 flex flex-col gap-6 bg-[#1d1a24]/40 border-l border-white/5 overflow-y-auto">
-        <div>
-          <h3 class="font-bold mb-3">Chọn Giọng Đọc</h3>
-          <div id="voiceGrid" class="grid grid-cols-2 gap-2"></div>
-        </div>
-
-        <div class="border-t border-white/5 pt-4 flex flex-col gap-4">
-          <h3 class="font-bold">Cài Đặt</h3>
-          <div>
-            <div class="flex justify-between text-sm mb-1"><label class="text-[#958da1]">Tốc độ đọc</label><span class="text-purple-300 font-bold" id="speedLabel">1.0x</span></div>
-            <input id="speedSlider" type="range" min="-3" max="3" step="0.5" value="1" class="w-full h-1.5 bg-white/10 rounded-lg">
-            <div class="flex justify-between text-[10px] text-[#958da1] mt-1"><span>Chậm</span><span>Nhanh</span></div>
-          </div>
-          <div>
-            <label class="text-sm text-[#958da1] mb-1 block">Kiểu phụ đề</label>
-            <select id="subtitleStyle" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-purple-500">
-              <option value="1">Ali Abdaal</option>
-              <option value="2">Marker Box</option>
-              <option value="3" selected>MrBeast</option>
-              <option value="4">Typewriter</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-sm text-[#958da1] mb-1 block">Vị trí phụ đề</label>
-            <div class="grid grid-cols-2 bg-white/5 rounded-xl p-1">
-              <button data-pos="center" onclick="setPos(this)" class="py-2 text-xs rounded-lg transition">Giữa</button>
-              <button data-pos="bottom" onclick="setPos(this)" class="py-2 text-xs rounded-lg bg-purple-500/20 text-white font-bold active-pos">Dưới</button>
+        <div class="flex-1 overflow-y-auto p-4 custom-scrollbar">
+          <!-- Media Tab Content -->
+          <div id="tab-media" class="resource-content space-y-4">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] uppercase tracking-wider text-muted font-bold">Kho Ảnh & Video</span>
+              <button onclick="openImagePicker()" class="text-[10px] px-2 py-1 bg-purple-600/20 text-purple-300 border border-purple-500/30 rounded-md hover:bg-purple-600 hover:text-white transition">+ Thêm</button>
             </div>
+            <input id="imageUploadInput" type="file" accept="image/*,video/*" multiple class="hidden">
+            <div id="uploadedImageList" class="grid grid-cols-1 gap-2"></div>
+            <p class="text-[10px] text-muted italic">Media sẽ được dùng xen kẽ hoặc làm nền chính cho video.</p>
           </div>
 
-          <div>
-            <label class="text-sm text-[#958da1] mb-1 block">Nguồn hình ảnh chính</label>
-            <select id="visualMode" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-purple-500">
-              <option value="pexels" selected>Pexels/background mặc định</option>
-              <option value="mix">Kết hợp ảnh upload + Pexels/background</option>
-              <option value="uploaded">Chỉ dùng ảnh upload</option>
-            </select>
+          <!-- Voice Tab Content -->
+          <div id="tab-voice" class="resource-content hidden space-y-4">
+            <span class="text-[11px] uppercase tracking-wider text-muted font-bold block mb-2">Chọn Giọng AI</span>
+            <select id="voiceSelect" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-purple-500 mb-4"></select>
+            <button onclick="previewVoice()" class="w-full py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs hover:bg-white/10 transition flex items-center justify-center gap-2">
+              <span class="material-symbols-outlined text-sm">headphones</span> Nghe thử giọng này
+            </button>
           </div>
 
-          <div class="glass rounded-xl p-3 border border-white/10">
-            <div class="flex items-center justify-between gap-2 mb-2">
-              <p class="text-sm font-semibold">Ảnh cho Studio</p>
-              <button onclick="openImagePicker()" class="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg transition">
-                + Thêm ảnh
-              </button>
-            </div>
-            <input id="imageUploadInput" type="file" accept="image/*" multiple class="hidden">
-            <p class="text-[11px] text-[#958da1] mb-2">Nếu không upload ảnh, hệ thống sẽ dùng Pexels/background như mặc định.</p>
-            <div id="uploadedImageList" class="max-h-44 overflow-y-auto flex flex-col gap-1.5 text-xs text-[#958da1]"></div>
-          </div>
-
-          <div class="glass rounded-xl p-3 border border-white/10">
-            <div class="flex items-center justify-between gap-2 mb-2">
-              <p class="text-sm font-semibold">Thư viện nhạc</p>
-              <button onclick="openMusicPicker()" class="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg transition">
-                + Thêm nhạc
-              </button>
+          <!-- Music Tab Content -->
+          <div id="tab-music" class="resource-content hidden space-y-4">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] uppercase tracking-wider text-muted font-bold">Thư viện nhạc</span>
+              <button onclick="openMusicPicker()" class="text-[10px] px-2 py-1 bg-purple-600/20 text-purple-300 border border-purple-500/30 rounded-md hover:bg-purple-600 hover:text-white transition">+ Tải lên</button>
             </div>
             <input id="musicUploadInput" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.webm" multiple class="hidden">
-            <div class="mb-2">
-              <label for="musicMode" class="text-[11px] text-[#958da1] block mb-1">Nguồn nhạc</label>
-              <select id="musicMode" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-purple-500">
-                <option value="manual" selected>Dùng nhạc thư viện (upload/sẵn có)</option>
-                <option value="ai_local">AI chọn từ thư viện nhạc có sẵn</option>
-              </select>
-            </div>
-            <div class="mb-2">
-              <label for="musicStartSec" class="text-[11px] text-[#958da1] block mb-1">Bắt đầu nhạc từ phút:giây (mm:ss)</label>
-              <input id="musicStartSec" type="text" value="00:00" placeholder="00:30" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-purple-500" />
-            </div>
-            <div class="mb-2">
-              <div class="flex items-center justify-between mb-1">
-                <label for="musicVolumeSlider" class="text-[11px] text-[#958da1]">Âm lượng nhạc nền</label>
-                <span id="musicVolumeValue" class="text-[11px] text-purple-300">22%</span>
+            <div id="musicLibraryList" class="space-y-2"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- COLUMN 2: WORKSPACE (Center) -->
+      <main class="flex-1 flex flex-col bg-black/20 relative">
+        <!-- AI Toolbar -->
+        <div class="p-6 pb-2">
+          <div class="glass rounded-2xl p-2 pl-4 flex items-center gap-3 border-purple-500/20 shadow-lg">
+            <span class="material-symbols-outlined text-purple-400">auto_awesome</span>
+            <input id="ideaInput" type="text" class="flex-1 bg-transparent border-none outline-none text-sm placeholder:text-muted/50" placeholder="Mô tả ý tưởng video (VD: Một ngày đi làm muộn hài hước phong cách meme)...">
+            <button id="btnGenerate" onclick="generateScript()" class="bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-all shadow-lg shadow-purple-600/20 flex items-center gap-2 shrink-0">
+               Tạo kịch bản AI
+            </button>
+          </div>
+        </div>
+
+        <!-- Script Workspace -->
+        <div class="flex-1 flex flex-col p-6 pt-2">
+          <div class="flex-1 glass rounded-[24px] p-8 flex flex-col border-white/5 shadow-inner">
+            <div class="flex items-center justify-between mb-6 opacity-60">
+              <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-tighter">
+                <span class="w-2 h-2 rounded-full bg-purple-500"></span> Soạn thảo nội dung
               </div>
-              <input id="musicVolumeSlider" type="range" min="0" max="100" step="1" value="22" class="w-full h-1.5 bg-white/10 rounded-lg" />
-            </div>
-            <div class="mb-2 grid grid-cols-2 gap-2">
-              <button onclick="previewSelectedMusic()" class="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg transition border border-white/10">
-                Nghe thử từ mốc
-              </button>
-              <button onclick="stopMusicPreview()" class="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg transition border border-white/10">
-                Dừng nghe thử
+              <button onclick="saveScript()" class="text-xs hover:text-purple-300 transition flex items-center gap-1">
+                <span class="material-symbols-outlined text-sm">save</span> Đã lưu
               </button>
             </div>
-            <div id="musicLibraryList" class="max-h-44 overflow-y-auto flex flex-col gap-1.5 text-xs text-[#958da1]"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Right: Result Video -->
-      <section class="flex-1 p-6 flex flex-col gap-4 bg-black/60 border-l border-white/5 overflow-y-auto items-center justify-center relative min-w-[350px]">
-        <h3 class="absolute top-6 left-6 font-bold text-lg flex items-center gap-2">
-          <span class="material-symbols-outlined text-purple-400">movie</span> Kết Quả
-        </h3>
-        
-        <!-- Progress Bar (shown when rendering) -->
-        <div class="glass rounded-xl p-6 w-full hidden z-10" id="progressContainer">
-          <div class="flex justify-between text-sm mb-3">
-            <span class="font-bold" id="progressLabel">Sẵn sàng render...</span>
-            <span class="text-purple-300 font-bold" id="progressPct">0%</span>
-          </div>
-          <div class="h-2 bg-white/5 rounded-full overflow-hidden">
-            <div class="h-full progress-glow rounded-full transition-all duration-500" id="progressBar" style="width:0%"></div>
-          </div>
-        </div>
-
-        <!-- Empty State -->
-        <div id="emptyResultState" class="flex flex-col items-center justify-center text-[#958da1] gap-3">
-          <span class="material-symbols-outlined text-6xl opacity-20">videocam</span>
-          <p class="text-sm">Video của bạn sẽ hiển thị ở đây</p>
-        </div>
-
-        <!-- Video Player -->
-        <div id="videoPreviewContainer" class="hidden flex-col items-center gap-6 w-full h-full justify-center mt-8">
-          <div class="relative rounded-[32px] overflow-hidden border-[8px] border-[#2a2438] shadow-[0_0_50px_rgba(124,58,237,0.15)] bg-black w-[280px] aspect-[9/16]">
-            <video id="resultPlayer" class="w-full h-full object-cover" controls playsinline></video>
-            <div class="absolute bottom-6 right-4 flex flex-col gap-4">
-              <div class="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white cursor-pointer hover:bg-white/30 transition"><span class="material-symbols-outlined">favorite</span></div>
-              <div class="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white cursor-pointer hover:bg-white/30 transition"><span class="material-symbols-outlined">chat</span></div>
-              <div class="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white cursor-pointer hover:bg-white/30 transition"><span class="material-symbols-outlined">share</span></div>
+            <textarea id="scriptArea" class="flex-1 bg-transparent border-none outline-none resize-none text-lg leading-relaxed font-medium placeholder:text-muted/20 custom-scrollbar" placeholder="Nội dung video của bạn bắt đầu từ đây..."></textarea>
+            
+            <div class="mt-6 flex items-center justify-between border-t border-white/5 pt-4">
+               <div class="flex gap-6 text-[11px] text-muted font-medium">
+                <span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">text_fields</span> <span id="charCount">0</span> ký tự</span>
+                <span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">schedule</span> Dự kiến: <span id="estTime" class="text-purple-300 font-bold">~0s</span></span>
+               </div>
+               <button onclick="startPipeline()" class="glow-btn text-white font-bold py-3 px-10 rounded-2xl flex items-center gap-3 text-sm scale-105">
+                 <span class="material-symbols-outlined">rocket_launch</span> XUẤT VIDEO NGAY
+               </button>
             </div>
           </div>
+        </div>
+      </main>
+
+      <!-- COLUMN 3: PREVIEW & SETTINGS (Right) -->
+      <section class="w-[360px] border-l border-white/5 flex flex-col bg-[#12121a]/50">
+        <!-- Video Preview -->
+        <div class="p-6 flex flex-col items-center border-b border-white/5 bg-black/40">
+          <h3 class="w-full text-xs font-bold text-muted uppercase tracking-wider mb-6 flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm">visibility</span> Video Preview
+          </h3>
           
-          <div class="flex items-center gap-3 w-full max-w-[280px]">
-            <button onclick="discardResult()" class="flex-1 py-3 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-xl font-bold transition flex items-center justify-center gap-2 border border-red-500/20">
-              <span class="material-symbols-outlined text-lg">delete</span> Hủy bỏ
-            </button>
-            <button onclick="keepResult()" class="flex-[2] py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white rounded-xl font-bold transition shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2">
-              <span class="material-symbols-outlined text-lg">check_circle</span> Giữ video
-            </button>
+          <div id="emptyResultState" class="w-[220px] aspect-[9/16] rounded-[40px] border-2 border-dashed border-white/10 flex flex-col items-center justify-center text-muted gap-3 bg-white/5">
+            <span class="material-symbols-outlined text-4xl opacity-20">videocam</span>
+            <p class="text-[11px] font-medium">Chưa có kết quả</p>
           </div>
 
-          <button id="btnDownload" onclick="downloadVideo()" class="hidden px-8 py-3 bg-white/5 hover:bg-white/10 rounded-xl font-bold flex items-center gap-2 transition border border-white/10">
-            <span class="material-symbols-outlined">download</span> Tải về máy
-          </button>
+          <div id="progressContainer" class="w-full hidden py-10 px-4">
+             <div class="flex justify-between text-[11px] mb-2 font-bold uppercase tracking-wider">
+               <span id="progressLabel" class="text-purple-300">Đang khởi tạo...</span>
+               <span id="progressPct">0%</span>
+             </div>
+             <div class="h-1.5 bg-white/5 rounded-full overflow-hidden">
+               <div id="progressBar" class="h-full bg-gradient-to-r from-purple-600 to-purple-400 rounded-full transition-all duration-500" style="width:0%"></div>
+             </div>
+          </div>
+
+          <div id="videoPreviewContainer" class="hidden flex-col items-center gap-4 w-full">
+            <div class="relative rounded-[40px] overflow-hidden border-[6px] border-[#252535] shadow-2xl bg-black w-[220px] aspect-[9/16]">
+              <video id="resultPlayer" class="w-full h-full object-cover" controls playsinline></video>
+            </div>
+            <div class="flex gap-2 w-full max-w-[220px]">
+              <button onclick="discardResult()" class="flex-1 py-2 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-lg text-[11px] font-bold border border-red-500/10 transition">Bỏ qua</button>
+              <button id="btnDownload" onclick="downloadVideo()" class="flex-1 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-[11px] font-bold border border-white/10 transition flex items-center justify-center gap-1">
+                <span class="material-symbols-outlined text-sm">download</span> Tải về
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings Quick Access -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+          <div class="space-y-4">
+             <h4 class="text-[11px] font-bold text-muted uppercase tracking-widest">Cấu hình nhanh</h4>
+             
+             <div>
+               <label class="text-[11px] text-muted mb-2 block font-bold">Chế độ hiển thị</label>
+               <div class="grid grid-cols-2 gap-2">
+                 <select id="videoMode" class="col-span-2 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-purple-500 transition-all">
+                    <option value="stickman" selected>Hoạt hình Stickman</option>
+                    <option value="realistic">Video thực tế Pexels</option>
+                 </select>
+               </div>
+             </div>
+
+             <div>
+                <label class="text-[11px] text-muted mb-2 block font-bold">Phụ đề & Tốc độ</label>
+                <div class="grid grid-cols-2 gap-2">
+                  <select id="subtitleStyle" class="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-purple-500 transition-all">
+                    <option value="1">Ali Abdaal</option>
+                    <option value="2">Marker Box</option>
+                    <option value="3" selected>MrBeast Style</option>
+                    <option value="4">Typewriter</option>
+                  </select>
+                  <div class="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs flex items-center justify-center gap-2">
+                    <span class="text-muted">Speed:</span> <span id="speedLabel" class="font-bold text-purple-300">1.0x</span>
+                  </div>
+                </div>
+                <input id="speedSlider" type="range" min="-3" max="3" step="0.5" value="1" class="w-full h-1 bg-white/10 rounded-lg mt-3">
+             </div>
+
+             <div class="pt-4 border-t border-white/5">
+                <h4 class="text-[11px] font-bold text-muted uppercase tracking-widest mb-4">Cấu hình Media & Nhạc</h4>
+                
+                <div class="space-y-3">
+                  <div class="bg-white/5 rounded-xl p-3 border border-white/5">
+                    <label class="text-[10px] text-muted uppercase font-bold block mb-2">Ưu tiên Media</label>
+                    <select id="visualMode" class="w-full bg-black/20 border border-white/5 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-purple-500">
+                      <option value="pexels" selected>Dùng Pexels mặc định</option>
+                      <option value="mix">Kết hợp Media upload</option>
+                      <option value="uploaded">Chỉ dùng Media upload</option>
+                    </select>
+                  </div>
+
+                  <div class="bg-white/5 rounded-xl p-3 border border-white/5">
+                    <label class="text-[10px] text-muted uppercase font-bold block mb-2">Nguồn nhạc</label>
+                    <select id="musicMode" class="w-full bg-black/20 border border-white/5 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-purple-500">
+                      <option value="manual" selected>Dùng nhạc thư viện (Thủ công)</option>
+                      <option value="ai_local">AI tự chọn từ thư viện</option>
+                    </select>
+                  </div>
+
+                  <div class="bg-white/5 rounded-xl p-3 border border-white/5">
+                    <div class="flex items-center justify-between mb-2">
+                      <label class="text-[10px] text-muted uppercase font-bold">Âm lượng BGM</label>
+                      <span id="musicVolumeValue" class="text-[10px] text-purple-300 font-bold">22%</span>
+                    </div>
+                    <input id="musicVolumeSlider" type="range" min="0" max="100" step="1" value="22" class="w-full h-1 bg-white/10 rounded-lg">
+                    
+                    <div class="mt-3 grid grid-cols-2 gap-2">
+                       <input id="musicStartSec" type="text" value="00:00" class="bg-black/20 border border-white/5 rounded-lg px-2 py-1.5 text-[10px] text-center outline-none" placeholder="Bắt đầu">
+                       <button onclick="previewSelectedMusic()" class="bg-purple-600/10 text-purple-400 border border-purple-500/20 py-1.5 rounded-lg text-[10px] font-bold hover:bg-purple-600 hover:text-white transition">Nghe thử</button>
+                    </div>
+                  </div>
+                </div>
+             </div>
+          </div>
         </div>
       </section>
+
     </div>
   </div>
 
@@ -295,8 +329,9 @@ input[type=range]{accent-color:#7c3aed;}
     <div class="glass rounded-xl p-5 max-w-lg">
       <h3 class="font-bold mb-3">API Keys</h3>
       <div class="flex flex-col gap-3">
-        <div><label class="text-xs text-[#958da1]">FPT.AI API Key</label><input type="password" value="SgND63fk1z6RyYH8gzrs7L28cYuAxvi5" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mt-1" readonly></div>
-        <div><label class="text-xs text-[#958da1]">Pexels API Key</label><input type="password" value="Configured" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mt-1" readonly></div>
+        <div><label class="text-xs text-[#958da1]">FPT.AI API Key</label><input type="password" value="********" placeholder="Đã cấu hình trong .env" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mt-1" readonly></div>
+        <div><label class="text-xs text-[#958da1]">Pexels API Key</label><input type="password" value="********" placeholder="Đã cấu hình trong .env" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mt-1" readonly></div>
+        <div><label class="text-xs text-[#958da1]">Gemini API Key</label><input type="password" value="********" placeholder="Đã cấu hình trong .env" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mt-1" readonly></div>
       </div>
     </div>
     <div class="glass rounded-xl p-5 max-w-lg">
