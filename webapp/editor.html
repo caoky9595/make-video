@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="vi"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-panel {
+            background: rgba(18, 33, 49, 0.7);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glass-card {
+            background: rgba(39, 54, 71, 0.4);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s ease;
+        }
+        .active-glow {
+            border: 1px solid #7c3aed;
+            box-shadow: 0px 0px 20px rgba(124, 58, 237, 0.15);
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "secondary-fixed": "#e3e0f1",
+                      "outline": "#958da1",
+                      "primary-fixed": "#eaddff",
+                      "tertiary": "#ddb7ff",
+                      "secondary-fixed-dim": "#c7c5d5",
+                      "primary-fixed-dim": "#d2bbff",
+                      "surface": "#051424",
+                      "secondary": "#c7c5d5",
+                      "on-secondary-fixed": "#1b1a26",
+                      "on-primary-container": "#ede0ff",
+                      "secondary-container": "#484855",
+                      "tertiary-fixed": "#f0dbff",
+                      "surface-container": "#122131",
+                      "inverse-primary": "#732ee4",
+                      "background": "#051424",
+                      "surface-container-high": "#1c2b3c",
+                      "surface-container-low": "#0d1c2d",
+                      "on-error": "#690005",
+                      "surface-tint": "#d2bbff",
+                      "tertiary-container": "#8d36db",
+                      "on-secondary-fixed-variant": "#464552",
+                      "on-surface": "#d4e4fa",
+                      "primary": "#d2bbff",
+                      "tertiary-fixed-dim": "#ddb7ff",
+                      "outline-variant": "#4a4455",
+                      "surface-container-highest": "#273647",
+                      "on-background": "#d4e4fa",
+                      "on-primary-fixed-variant": "#5a00c6",
+                      "primary-container": "#7c3aed",
+                      "on-surface-variant": "#ccc3d8",
+                      "on-tertiary": "#490080",
+                      "on-tertiary-container": "#f2dfff",
+                      "on-primary-fixed": "#25005a",
+                      "on-tertiary-fixed": "#2c0051",
+                      "surface-container-lowest": "#010f1f",
+                      "surface-dim": "#051424",
+                      "surface-bright": "#2c3a4c",
+                      "error": "#ffb4ab",
+                      "on-secondary-container": "#b9b7c6",
+                      "inverse-on-surface": "#233143",
+                      "on-tertiary-fixed-variant": "#6900b3",
+                      "on-primary": "#3f008e",
+                      "inverse-surface": "#d4e4fa",
+                      "on-error-container": "#ffdad6",
+                      "error-container": "#93000a",
+                      "surface-variant": "#273647",
+                      "on-secondary": "#302f3b"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "md": "16px",
+                      "xl": "40px",
+                      "unit": "4px",
+                      "xs": "4px",
+                      "sm": "8px",
+                      "gutter": "20px",
+                      "margin": "32px",
+                      "lg": "24px"
+              },
+              "fontFamily": {
+                      "script-editor": ["Monospace"],
+                      "h2": ["Inter"],
+                      "h1": ["Inter"],
+                      "body-md": ["Inter"],
+                      "label-caps": ["Inter"]
+              },
+              "fontSize": {
+                      "script-editor": ["14px", {"lineHeight": "1.7", "fontWeight": "400"}],
+                      "h2": ["24px", {"lineHeight": "1.3", "fontWeight": "600"}],
+                      "h1": ["40px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                      "body-md": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                      "label-caps": ["12px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "600"}]
+              }
+            },
+          },
+        }
+      </script>
+</head>
+<body class="bg-background text-on-surface min-h-screen flex font-body-md overflow-hidden">
+<!-- SideNavBar (Predicted Component) -->
+<aside class="fixed left-0 top-0 h-screen w-64 z-50 bg-surface-container-low/90 backdrop-blur-[24px] border-r border-white/5 flex flex-col py-8">
+<div class="px-6 mb-10">
+<h1 class="font-h3 text-h3 font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">AutoCreator</h1>
+<p class="text-on-surface-variant text-[10px] uppercase tracking-widest mt-1">AI Video Engine</p>
+</div>
+<nav class="flex-1 flex flex-col gap-1">
+<a class="flex items-center gap-4 text-on-surface-variant px-4 py-3 hover:text-on-surface mx-4 rounded-xl transition-all duration-300 hover:bg-white/5" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-label-sm">Bảng điều khiển</span>
+</a>
+<a class="flex items-center gap-4 bg-primary-container/20 text-primary border-l-4 border-primary px-4 py-3 mx-4 rounded-r-xl" href="#">
+<span class="material-symbols-outlined" data-icon="description" style="font-variation-settings: 'FILL' 1;">description</span>
+<span class="font-label-sm">Soạn thảo kịch bản</span>
+</a>
+<a class="flex items-center gap-4 text-on-surface-variant px-4 py-3 hover:text-on-surface mx-4 rounded-xl transition-all duration-300 hover:bg-white/5" href="#">
+<span class="material-symbols-outlined" data-icon="record_voice_over">record_voice_over</span>
+<span class="font-label-sm">Cài đặt giọng nói</span>
+</a>
+</nav>
+<div class="px-6 mb-8">
+<button class="w-full py-3 px-4 bg-primary text-on-primary font-bold rounded-xl active:translate-y-1 transition-all shadow-lg shadow-primary/20">
+                Nâng cấp Pro
+            </button>
+</div>
+<div class="border-t border-white/5 pt-6 flex flex-col gap-1">
+<a class="flex items-center gap-4 text-on-surface-variant px-4 py-3 hover:text-on-surface mx-4 rounded-xl transition-all duration-300" href="#">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+<span class="font-label-sm">Trợ giúp</span>
+</a>
+<a class="flex items-center gap-4 text-on-surface-variant px-4 py-3 hover:text-on-surface mx-4 rounded-xl transition-all duration-300" href="#">
+<span class="material-symbols-outlined" data-icon="logout">logout</span>
+<span class="font-label-sm">Đăng xuất</span>
+</a>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 flex-1 flex h-screen overflow-hidden">
+<!-- Left Panel: Script Editor (60%) -->
+<section class="w-[60%] p-8 flex flex-col gap-6">
+<div class="flex justify-between items-center">
+<h2 class="font-h2 text-h2 text-on-surface">Kịch Bản Video</h2>
+<div class="flex gap-2">
+<span class="px-3 py-1 bg-surface-container-highest rounded-full text-xs text-on-surface-variant">V0.2.1-Draft</span>
+</div>
+</div>
+<div class="flex-1 glass-panel rounded-2xl p-6 flex flex-col relative">
+<textarea class="flex-1 bg-transparent border-none outline-none resize-none font-script-editor text-script-editor text-on-surface placeholder:text-outline-variant selection:bg-primary/30" placeholder="Bắt đầu viết kịch bản của bạn tại đây...">[00:00] Chào mừng các bạn đã quay trở lại với kênh TikTok của mình. 
+[00:03] Hôm nay chúng ta sẽ cùng khám phá 5 bí mật đằng sau các video triệu view.
+[00:08] Bí mật đầu tiên nằm ở chính cách các bạn mở đầu video trong 3 giây đầu tiên.
+[00:15] Hãy nhớ rằng, sự tò mò là chìa khóa để giữ chân người xem lâu hơn.
+[00:22] Chúc các bạn áp dụng thành công và đừng quên nhấn follow để cập nhật thêm nhé!</textarea>
+<div class="absolute bottom-6 right-6 flex gap-4 text-label-caps text-on-surface-variant">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]" data-icon="text_fields">text_fields</span> 503 ký tự</span>
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]" data-icon="timer">timer</span> ~30s</span>
+</div>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex gap-4">
+<button class="bg-gradient-to-r from-primary-container to-inverse-primary hover:shadow-[0px_0px_20px_rgba(124,58,237,0.4)] text-white font-bold py-3 px-8 rounded-xl flex items-center gap-2 transition-all active:scale-95">
+                        Cải thiện bằng AI ✨
+                    </button>
+<button class="border border-error/40 text-error hover:bg-error/5 py-3 px-6 rounded-xl transition-all active:scale-95">
+                        Xóa
+                    </button>
+</div>
+<div class="flex items-center gap-2 text-on-surface-variant text-sm">
+<span class="material-symbols-outlined text-sm" data-icon="cloud_done">cloud_done</span>
+                    Đã lưu bản nháp
+                </div>
+</div>
+</section>
+<!-- Right Panel: Voice & Settings (40%) -->
+<section class="w-[40%] p-8 flex flex-col gap-8 bg-surface-container-low/40 border-l border-white/5 overflow-y-auto">
+<!-- Voice Selection Section -->
+<div class="flex flex-col gap-4">
+<div class="flex justify-between items-end">
+<h3 class="text-lg font-bold text-on-surface">Chọn Giọng Đọc</h3>
+<a class="text-primary text-xs font-medium hover:underline" href="#">Tất cả giọng</a>
+</div>
+<div class="grid grid-cols-3 gap-3">
+<!-- Voice Cards -->
+<div class="glass-card active-glow rounded-xl p-3 flex flex-col items-center gap-2 relative group cursor-pointer">
+<div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined" data-icon="face_3">face_3</span>
+</div>
+<span class="text-xs font-bold text-on-surface">Ban Mai</span>
+<div class="flex gap-1 flex-wrap justify-center">
+<span class="text-[9px] px-1.5 py-0.5 bg-primary/10 text-primary rounded-md">Bắc</span>
+<span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Edge-TTS</span>
+</div>
+<button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-primary rounded-full p-1 text-on-primary">
+<span class="material-symbols-outlined text-[16px]" data-icon="play_arrow" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+</div>
+<div class="glass-card rounded-xl p-3 flex flex-col items-center gap-2 relative group cursor-pointer hover:border-white/20">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined" data-icon="face">face</span>
+</div>
+<span class="text-xs font-bold text-on-surface">Lê Minh</span>
+<div class="flex gap-1 flex-wrap justify-center">
+<span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Nam</span>
+<span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">FPT.AI</span>
+</div>
+<button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/20 rounded-full p-1 text-white">
+<span class="material-symbols-outlined text-[16px]" data-icon="play_arrow" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+</div>
+<div class="glass-card rounded-xl p-3 flex flex-col items-center gap-2 relative group cursor-pointer hover:border-white/20">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined" data-icon="face_6">face_6</span>
+</div>
+<span class="text-xs font-bold text-on-surface">Khánh Huyền</span>
+<div class="flex gap-1 flex-wrap justify-center">
+<span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Trung</span>
+<span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Edge-TTS</span>
+</div>
+<button class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/20 rounded-full p-1 text-white">
+<span class="material-symbols-outlined text-[16px]" data-icon="play_arrow" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+</div>
+<!-- Repeat cards to reach 9 -->
+<div class="glass-card rounded-xl p-3 flex flex-col items-center gap-2 cursor-pointer hover:border-white/20">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-secondary"><span class="material-symbols-outlined" data-icon="face_2">face_2</span></div>
+<span class="text-xs font-bold text-on-surface">Minh Thu</span>
+<div class="flex gap-1"><span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Bắc</span></div>
+</div>
+<div class="glass-card rounded-xl p-3 flex flex-col items-center gap-2 cursor-pointer hover:border-white/20">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-secondary"><span class="material-symbols-outlined" data-icon="face_5">face_5</span></div>
+<span class="text-xs font-bold text-on-surface">Quang Đăng</span>
+<div class="flex gap-1"><span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Nam</span></div>
+</div>
+<div class="glass-card rounded-xl p-3 flex flex-col items-center gap-2 cursor-pointer hover:border-white/20">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-secondary"><span class="material-symbols-outlined" data-icon="face_4">face_4</span></div>
+<span class="text-xs font-bold text-on-surface">Ngọc Trinh</span>
+<div class="flex gap-1"><span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Nam</span></div>
+</div>
+<div class="glass-card rounded-xl p-3 flex flex-col items-center gap-2 cursor-pointer hover:border-white/20">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-secondary"><span class="material-symbols-outlined" data-icon="face">face</span></div>
+<span class="text-xs font-bold text-on-surface">Thế Phong</span>
+<div class="flex gap-1"><span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Bắc</span></div>
+</div>
+<div class="glass-card rounded-xl p-3 flex flex-col items-center gap-2 cursor-pointer hover:border-white/20">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-secondary"><span class="material-symbols-outlined" data-icon="face_3">face_3</span></div>
+<span class="text-xs font-bold text-on-surface">Hoài Linh</span>
+<div class="flex gap-1"><span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Nam</span></div>
+</div>
+<div class="glass-card rounded-xl p-3 flex flex-col items-center gap-2 cursor-pointer hover:border-white/20">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-secondary"><span class="material-symbols-outlined" data-icon="face_6">face_6</span></div>
+<span class="text-xs font-bold text-on-surface">Thúy Hạnh</span>
+<div class="flex gap-1"><span class="text-[9px] px-1.5 py-0.5 bg-white/5 text-on-surface-variant rounded-md">Bắc</span></div>
+</div>
+</div>
+</div>
+<!-- Settings Section -->
+<div class="flex flex-col gap-6 pt-4 border-t border-white/5">
+<h3 class="text-lg font-bold text-on-surface">Cài Đặt</h3>
+<!-- Speed Slider -->
+<div class="flex flex-col gap-3">
+<div class="flex justify-between items-center">
+<label class="text-sm font-medium text-on-surface-variant">Tốc độ đọc</label>
+<span class="text-primary font-bold text-sm">1.0x</span>
+</div>
+<input class="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-primary" max="3" min="-3" step="0.1" type="range" value="0"/>
+<div class="flex justify-between text-[10px] text-outline">
+<span>Chậm (-3)</span>
+<span>Chuẩn</span>
+<span>Nhanh (+3)</span>
+</div>
+</div>
+<!-- Subtitle Dropdown -->
+<div class="flex flex-col gap-2">
+<label class="text-sm font-medium text-on-surface-variant">Phong cách phụ đề</label>
+<div class="relative">
+<select class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-on-surface appearance-none outline-none focus:border-primary transition-all">
+<option>Ali Abdaal</option>
+<option>Marker Box</option>
+<option selected="">MrBeast</option>
+<option>Typewriter</option>
+</select>
+<span class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant" data-icon="unfold_more">unfold_more</span>
+</div>
+</div>
+<!-- Position Toggle -->
+<div class="flex flex-col gap-2">
+<label class="text-sm font-medium text-on-surface-variant">Vị trí phụ đề</label>
+<div class="grid grid-cols-2 bg-white/5 rounded-xl p-1">
+<button class="py-2 text-xs font-medium text-on-surface-variant hover:text-on-surface rounded-lg transition-all">Giữa</button>
+<button class="py-2 text-xs font-bold text-white bg-primary/20 rounded-lg shadow-sm">Dưới</button>
+</div>
+</div>
+</div>
+<!-- Preview Action -->
+<div class="mt-auto pt-6">
+<button class="w-full bg-gradient-to-r from-primary-container to-inverse-primary hover:shadow-[0px_0px_30px_rgba(124,58,237,0.3)] text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95">
+                    Tạo Audio &amp; Preview 🎙️
+                </button>
+<p class="text-[10px] text-center text-outline mt-4">Tiêu tốn khoảng 0.5 credits cho kịch bản này.</p>
+</div>
+</section>
+</main>
+<!-- Visual Polish: Background Glows -->
+<div class="fixed top-[-10%] right-[-5%] w-[400px] h-[400px] bg-primary/10 blur-[120px] rounded-full pointer-events-none -z-10"></div>
+<div class="fixed bottom-[-10%] left-[20%] w-[300px] h-[300px] bg-tertiary/10 blur-[100px] rounded-full pointer-events-none -z-10"></div>
+</body></html>

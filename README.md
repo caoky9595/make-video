@@ -1,80 +1,94 @@
-# 🎬 TikTok Video Kể Truyện Auto-Creator
+# 🎬 VideoMaker Pro - AI Video Creator
 
-Hệ thống tự động tạo video TikTok chuẩn Affiliate/Viral từ kịch bản text. Hệ thống đặc biệt tối ưu cho ngách **Video Đọc Truyện (Reddit Stories, Tâm Sự, Creepy Pastas)**.
-Nhập kịch bản → Xuất một hoặc nhiều video MP4 hoàn chỉnh với Giọng đọc tiếng Việt (Cảm xúc) + Subtitle tịnh tâm + Ảnh bìa + Nhạc nền Lofi + Chia Part vòng lặp bằng AI.
+Hệ thống tạo video TikTok tự động với giao diện web premium. Tích hợp AI thông minh để biến ý tưởng thành video thành phẩm chỉ trong vài phút.
 
-**Chi phí API: $0/tháng** — Tất cả đều dùng công cụ miễn phí hoặc gói Free.
+### ✨ Tính năng mới (v2.0)
+*   **Giao diện 3 cột chuyên nghiệp:** Trải nghiệm Studio thực thụ với Script - Settings - Preview trên cùng một màn hình.
+*   **Thư viện Video (Dashboard):** Quản lý video dưới dạng lưới (Grid) với Thumbnail trực quan.
+*   **Hệ thống Quản lý Output:** Hỗ trợ xem trước video ngay trên web, chọn nhiều file, xóa hàng loạt.
+*   **AI Script Generator:** Tích hợp Gemini Flash để tạo kịch bản từ ý tưởng chỉ trong 5 giây.
+*   **Persistence:** Ghi nhớ Tab làm việc ngay cả khi tải lại trang (F5).
+*   **Unique Output:** Tự động đặt tên video theo thời gian, không lo ghi đè.
 
-## ✨ Tính năng Viral Tích Hợp
+## 🚀 Khởi chạy Web App
 
-- 🎙️ **Text-to-Speech**: Giọng đọc tiếng Việt mượt mà (nữ HoaiMy / nam NamMinh).
-- 🔤 **Dynamic Subtitles**: Vẽ phụ đề động nhảy chữ từng từ theo giọng đọc. Hỗ trợ 4 phong cách (Ali Abdaal, Marker Box, MrBeast, Typewriter)
-- 🖼️ **Auto Thumbnail**: Mỗi video xuất ra sẽ tự động kèm theo 1 ảnh bìa `_cover.jpg` giật tít câu đầu tiên phong cách tò mò.
-- 🎶 **Auto BGM Mixing**: Tự động lặp lại nhạc lofi/piano trong folder `audio_bg/` và dìm âm lượng (ducking) xuống 10% bảo vệ giọng đọc.
-- ✂️ **AI Auto-Splitter**: Khi bật `--auto-split`, não bộ AI Gemini sẽ tự phân tích cốt truyện và "bổ đôi" ngay khúc gay cấn nhất để nhử người xem sang Part 2.
-- 📤 **Auto Upload TikTok**: Upload tự động qua tài khoản đã login Playwright đính kèm HashTags.
-- 💻 **Cross-platform**: Chạy mượt trên Mac, Windows, Linux.
-
-## 🚀 Cài đặt
-
-1. Install dependencies
 ```bash
-pip install -r requirements.txt
-```
-2. Cài trình giả lập duyệt Web Playwright (tùy chọn tải video TikTok tự động)
-```bash
-python -m playwright install chromium
-```
-3. Kết nối não bộ AI (Tuyệt mật)
-Lấy API miễn phí tại Google AI Studio. Tạo file `.env` cùng thư mục code và khai báo:
-```bash
-GEMINI_API_KEY=mã_ai_miễn_phí_từ_google
+# Kích hoạt môi trường
+source .venv/bin/activate
+
+# Chạy web server
+python app.py
+
+# → Mở http://localhost:5000
 ```
 
-## 📖 Hướng Dẫn Sử Dụng Tool (CLI)
+## 💻 Chạy CLI (không cần web)
 
-### 1. Viết kịch bản
-Tạo file `script.txt`. Cách tốt nhất là Plain text (văn xuôi). Công cụ tự động parse.
-
-### 2. Tạo video Đọc Truyện Chuẩn (Tự Động)
-Hệ thống mặc định thiết kế cho kênh chuyện: Chữ nằm dưới (`--position bottom`), Style tĩnh lặng (`--style 1`).
-Chỉ cần Copy paste nhạc nền ngẫu nhiên vào thư mục `audio_bg/` và chạy lệnh ngắn nhất:
 ```bash
-python main.py
+python main.py                          # Tạo video từ script.txt
+python main.py --voice banmai           # Dùng giọng FPT.AI Ban Mai
+python main.py --upload                 # Tạo + upload TikTok
+python main.py --list-voices            # Xem danh sách giọng đọc
+python main.py --auto-split             # AI cắt phần tự động
 ```
 
-### 3. Chia Phần Bằng AI Kéo View (Auto Split)
-Nếu truyện cực dài, thay vì người xem lướt đi mất do ngán, hãy chia nhỏ video ra làm 2 phần tại nơi Hồi hộp nhất để kéo follow:
-```bash
-python main.py --auto-split
-```
-Hệ thống sẽ gọi tính toán AI, sau đó xuất ra `output/final_video_part1.mp4` và `output/final_video_part2.mp4` liên tục tự động!
+## 🎙️ Giọng đọc hỗ trợ (9 giọng)
 
-### 4. Tùy chỉnh Khác
-Đổi sang phong cách tin tức năng lượng cao:
-```bash
-python main.py --style 3 --position center --rate "+20%"
-```
-Vừa tạo video xong vừa Login TikTok Tự Đăng:
-```bash
-python main.py --upload --title "Creepypasta đêm mưa" --tags storiestiktok,reddit
-```
+| ID | Tên | Giới tính | Vùng miền | Engine |
+|---|---|---|---|---|
+| `hoaimy` | Hoài My | Nữ | Bắc | Edge-TTS (Free) |
+| `namminh` | Nam Minh | Nam | Bắc | Edge-TTS (Free) |
+| `banmai` | Ban Mai | Nữ | Bắc | FPT.AI |
+| `thuminh` | Thu Minh | Nữ | Bắc | FPT.AI |
+| `leminh` | Lê Minh | Nam | Bắc | FPT.AI |
+| `myan` | Mỹ An | Nữ | Trung | FPT.AI |
+| `giahuy` | Gia Huy | Nam | Trung | FPT.AI |
+| `lannhi` | Lan Nhi | Nữ | Nam | FPT.AI |
+| `linhsan` | Linh San | Nữ | Nam | FPT.AI |
 
-## 🔧 Danh sách Thuộc Tính Tham Số (Options)
+## 🌐 API Endpoints
 
-| Flag | Mặc định | Mô tả |
+| Method | Endpoint | Mô tả |
 |---|---|---|
-| `--script` | `script.txt` | File chứa kịch bản. |
-| `--style` | `1` | 1: Ali (Tối giản), 2: Box, 3: MrBeast, 4: Typewriter. |
-| `--position`| `bottom` | `center` (Giữa) hoặc `bottom` (Dưới chân). |
-| `--auto-split`| Tắt | Bật để kích hoạt AI bổ luống video (cần GEMINI API). |
-| `--voice` | `hoaimy` | Giọng `hoaimy` (nữ) / `namminh` (nam). |
-| `--rate` | `+20%` | Tốc độ. VD: `+0%` (chuẩn), `+20%` (Nhanh xíu). |
-| `--bg-dir` | `backgrounds/` | Thư mục chứa Background Satisfying Gameplay (mp4). |
-| `--bgm-dir` | `audio_bg/` | Thư mục chứa nhạc nền Lofi / Creepy Sound (mp3/wav/ogg) |
-| `--auto-bg` | Bật | Nếu thư mục video trống, tự động lên Pexels tải (Khuyên tắt). |
-| `--upload` | Tắt | Tự động mở Playwright tải lên TikTok lúc Render xong. |
+| GET | `/api/voices` | Danh sách giọng đọc |
+| GET | `/api/stats` | Thống kê tổng quan |
+| GET | `/api/script/load` | Đọc kịch bản |
+| POST | `/api/script/save` | Lưu kịch bản |
+| POST | `/api/tts/preview` | Preview giọng đọc |
+| POST | `/api/pipeline/start` | Bắt đầu tạo video |
+| GET | `/api/pipeline/status` | Trạng thái pipeline |
+| GET | `/api/backgrounds` | Video nền có sẵn |
+| GET | `/api/bgm` | Nhạc nền có sẵn |
+| GET | `/api/outputs` | Danh sách video thành phẩm |
+| POST | `/api/outputs/delete` | Xóa một hoặc nhiều video |
+| POST | `/api/outputs/delete_all` | Dọn dẹp sạch thư viện video |
 
-## 📄 License
-MIT License
-Dự án được xây dựng mô phỏng luồng Affiliate Automation Story Format.
+## 📁 Cấu trúc dự án
+
+```
+play/
+├── app.py              # Flask web server + API
+├── main.py             # CLI pipeline
+├── tts.py              # Text-to-Speech (Edge + FPT.AI)
+├── video_maker.py      # Video renderer
+├── bg_finder.py        # Tìm video nền Pexels
+├── uploader.py         # Upload TikTok
+├── ai_splitter.py      # AI cắt phần (Gemini)
+├── webapp/             # Giao diện web SPA
+│   ├── index.html      # Layout chính (Tailwind CSS + Glassmorphism)
+│   └── app.js          # Logic điều hướng, API & UI
+├── script.txt          # Kịch bản mẫu
+├── backgrounds/        # Video nền
+├── audio_bg/           # Nhạc nền
+├── output/             # Video đã xuất
+└── .env                # API keys
+```
+
+## ⚙️ Cài đặt
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # Thêm API keys
+```

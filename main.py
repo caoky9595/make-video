@@ -122,11 +122,27 @@ Ví dụ sử dụng:
     parser.add_argument(
         "--voice",
         default="hoaimy",
-        choices=["hoaimy", "namminh"],
-        help="Giọng đọc: 'hoaimy' (nữ - mặc định) hoặc 'namminh' (nam)",
+        choices=["hoaimy", "namminh", "banmai", "thuminh", "leminh", "myan", "giahuy", "lannhi", "linhsan"],
+        help=(
+            "Giọng đọc. Edge-TTS: 'hoaimy' (nữ Bắc), 'namminh' (nam Bắc). "
+            "FPT.AI: 'banmai' (nữ Bắc), 'thuminh' (nữ Bắc), 'leminh' (nam Bắc), "
+            "'myan' (nữ Trung), 'giahuy' (nam Trung), 'lannhi' (nữ Nam), 'linhsan' (nữ Nam). "
+            "Mặc định: hoaimy"
+        ),
+    )
+    parser.add_argument(
+        "--list-voices",
+        action="store_true",
+        help="Hiển thị danh sách tất cả giọng đọc có sẵn và thoát",
     )
 
     args = parser.parse_args()
+
+    # === Hiển thị danh sách giọng đọc ===
+    if args.list_voices:
+        from tts import list_voices
+        list_voices()
+        return
 
     # === Chế độ đăng nhập TikTok ===
     if args.login:

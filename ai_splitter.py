@@ -23,7 +23,7 @@ def split_story_script(script_text: str):
         return None
 
     print("\n🧠 [AI Splitter] Đang gọi Gemini AI để phân tích điểm cắt gay cấn nhất...")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
     
     prompt = f"""Bạn là một chuyên gia biên tập video kể chuyện (Reddit Stories, Tâm sự).
 Nhiệm vụ: Chia kịch bản sau đây làm 2 hoặc tối đa 3 phần, mỗi phần độ dài ngang nhau.

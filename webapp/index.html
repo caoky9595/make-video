@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>VideoMaker Pro - AI Video Creator</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script>
+tailwind.config = { darkMode:"class", theme:{ extend:{
+  colors:{ "surface":"#0F0F1A","surface-card":"rgba(255,255,255,0.03)","surface-hover":"rgba(255,255,255,0.06)","primary":"#7c3aed","primary-light":"#d2bbff","accent":"#a855f7","on-surface":"#e8dfee","muted":"#958da1","success":"#45dfa4","error":"#ffb4ab" },
+  fontFamily:{ sans:["Inter","sans-serif"] }
+}}}
+</script>
+<style>
+body{background:#0F0F1A;color:#e8dfee;font-family:'Inter',sans-serif;}
+.glass{background:rgba(255,255,255,0.03);backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.08);transition:all .3s;}
+.glass:hover{border-color:rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);}
+.glow-btn{background:linear-gradient(135deg,#7c3aed,#6f00be);box-shadow:0 0 20px rgba(124,58,237,0.3);transition:all .2s;}
+.glow-btn:hover{box-shadow:0 0 30px rgba(124,58,237,0.5);transform:scale(1.02);}
+.glow-btn:active{transform:scale(0.97);}
+.page{display:none;}.page.active{display:flex;}
+.nav-item{display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:12px;cursor:pointer;color:#958da1;font-size:13px;font-weight:500;transition:all .2s;}
+.nav-item:hover{background:rgba(255,255,255,0.05);color:#e8dfee;}
+.nav-item.active{background:linear-gradient(135deg,#7c3aed,#6f00be);color:white;box-shadow:0 0 20px rgba(124,58,237,0.3);}
+.voice-card{cursor:pointer;transition:all .2s;}.voice-card:hover{border-color:rgba(124,58,237,0.5)!important;}
+.voice-card.selected{border:2px solid #7c3aed!important;box-shadow:0 0 15px rgba(124,58,237,0.3);}
+::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:10px;}
+textarea{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.1) transparent;}
+input[type=range]{accent-color:#7c3aed;}
+.progress-glow{background:linear-gradient(135deg,#7c3aed,#a855f7);box-shadow:0 0 10px rgba(124,58,237,0.5);}
+</style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+<!-- SIDEBAR -->
+<aside class="w-60 bg-[#1d1a24]/95 backdrop-blur-2xl border-r border-white/5 flex flex-col py-6 px-3 shrink-0">
+  <div class="px-3 mb-8">
+    <h1 class="text-lg font-bold bg-gradient-to-r from-purple-300 to-purple-400 bg-clip-text text-transparent">🎬 VideoMaker Pro</h1>
+    <p class="text-[10px] text-[#958da1] uppercase tracking-widest mt-1">AI Creative Studio</p>
+  </div>
+  <nav class="flex flex-col gap-1 flex-1">
+    <a class="nav-item active" onclick="showPage('dashboard',this)"><span class="material-symbols-outlined text-xl">dashboard</span>Dashboard</a>
+    <a class="nav-item" onclick="showPage('editor',this)"><span class="material-symbols-outlined text-xl">edit_note</span>Studio Sáng Tạo</a>
+  </nav>
+  <div class="border-t border-white/5 pt-4 flex flex-col gap-1">
+    <a class="nav-item" onclick="showPage('settings',this)"><span class="material-symbols-outlined text-xl">settings</span>Cài đặt</a>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="flex-1 flex flex-col overflow-hidden">
+  <!-- TOPBAR -->
+  <header class="h-14 bg-[#15121b]/80 backdrop-blur-xl border-b border-white/6 flex items-center justify-between px-6 shrink-0">
+    <span class="font-semibold text-base" id="pageTitle">Dashboard</span>
+    <div class="flex items-center gap-3">
+      <span class="text-xs text-[#958da1]" id="statusText">● Sẵn sàng</span>
+      <div class="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center text-sm font-bold">K</div>
+    </div>
+  </header>
+
+  <!-- ==================== PAGE: DASHBOARD ==================== -->
+  <div class="page active flex-col overflow-y-auto p-6 gap-6" id="page-dashboard">
+    <!-- Stats Row -->
+    <div class="grid grid-cols-4 gap-4">
+      <div class="glass rounded-xl p-5"><p class="text-xs text-[#958da1] mb-1">Video đã tạo</p><p class="text-3xl font-bold" id="statVideos">0</p></div>
+      <div class="glass rounded-xl p-5"><p class="text-xs text-[#958da1] mb-1">Dung lượng</p><p class="text-3xl font-bold" id="statSize">0 MB</p></div>
+      <div class="glass rounded-xl p-5"><p class="text-xs text-[#958da1] mb-1">FPT.AI đã dùng</p><p class="text-3xl font-bold" id="fptPct">0%</p>
+        <div class="w-full h-1.5 bg-white/5 rounded-full mt-2"><div class="h-full bg-gradient-to-r from-purple-500 to-purple-400 rounded-full" id="fptBar" style="width:0%"></div></div>
+        <p class="text-[10px] text-[#958da1] mt-1" id="fptUsed">0 / 100,000</p>
+      </div>
+      <div class="glass rounded-xl p-5"><p class="text-xs text-[#958da1] mb-1">Giọng đọc</p><p class="text-3xl font-bold">9</p><p class="text-xs text-purple-300 mt-1">2 Free + 7 Pro</p></div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="glass rounded-xl p-6">
+      <h2 class="text-xl font-bold mb-2">Chào buổi sáng, Nhà sáng tạo!</h2>
+      <p class="text-sm text-[#958da1] mb-4">Sẵn sàng tạo video viral tiếp theo?</p>
+      <button onclick="showPage('editor',document.querySelectorAll('.nav-item')[1])" class="glow-btn text-white px-6 py-3 rounded-xl font-semibold flex items-center gap-2">
+        <span class="material-symbols-outlined">add_circle</span>Tạo Video Mới
+      </button>
+    </div>
+
+    <!-- Recent Outputs -->
+    <div class="flex flex-col gap-4">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-lg">Thư viện Video</h3>
+        <div class="flex items-center gap-2" id="outputActions" style="display:none">
+          <button onclick="selectAllVideos(true)" class="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg transition">Chọn tất cả</button>
+          <button onclick="deleteSelectedVideos()" class="text-xs px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm">delete</span> Xóa đã chọn (<span id="selectedCount">0</span>)
+          </button>
+          <button onclick="deleteAllVideos()" class="text-xs px-3 py-1.5 border border-red-500/30 text-red-400 hover:bg-red-500/10 rounded-lg transition">Xóa hết</button>
+        </div>
+      </div>
+      
+      <div id="outputList" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        <!-- Videos will be injected here -->
+        <div class="col-span-full py-20 flex flex-col items-center justify-center text-[#958da1] opacity-50">
+          <span class="material-symbols-outlined text-5xl mb-2">video_library</span>
+          <p>Chưa có video nào được tạo.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== PAGE: EDITOR ==================== -->
+  <div class="page flex-1 overflow-hidden w-full" id="page-editor">
+    <div class="flex h-full w-full">
+      <!-- Left: Script -->
+      <section class="flex-[1.2] p-6 flex flex-col gap-4 min-w-[350px]">
+        <div class="flex justify-between items-center">
+          <h2 class="text-xl font-bold">Kịch Bản Video</h2>
+          <div class="flex gap-2">
+            <button onclick="saveScript()" class="text-xs bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center gap-1">
+              <span class="material-symbols-outlined text-sm">save</span>Lưu
+            </button>
+          </div>
+        </div>
+        
+        <!-- AI Generator -->
+        <div class="glass rounded-xl p-4 flex gap-3 items-start border-purple-500/30">
+          <textarea id="ideaInput" class="flex-1 bg-transparent border border-white/10 rounded-lg px-3 py-2 outline-none resize-none text-sm h-16 placeholder:text-[#958da1]/50 focus:border-purple-500" placeholder="Nhập ý tưởng video của bạn... (VD: 3 mẹo giúp giảm cân không cần ăn kiêng)"></textarea>
+          <button id="btnGenerate" onclick="generateScript()" class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-lg flex flex-col items-center justify-center gap-1 h-16 w-32 transition-all shrink-0">
+            <span class="material-symbols-outlined text-sm">auto_awesome</span> Tạo bằng AI
+          </button>
+        </div>
+
+        <div class="glass rounded-2xl p-5 flex-1 flex flex-col relative mt-2">
+          <textarea id="scriptArea" class="flex-1 bg-transparent border-none outline-none resize-none text-sm leading-7 font-mono placeholder:text-[#958da1]/50" placeholder="Viết kịch bản video của bạn tại đây hoặc dùng AI tạo kịch bản ở trên..."></textarea>
+          <div class="flex gap-4 text-[11px] text-[#958da1] mt-2">
+            <span class="flex items-center gap-1"><span class="material-symbols-outlined text-xs">text_fields</span><span id="charCount">0 ký tự</span></span>
+            <span class="flex items-center gap-1"><span class="material-symbols-outlined text-xs">timer</span><span id="estTime">~0s</span></span>
+            <span class="flex items-center gap-1 text-green-400"><span class="material-symbols-outlined text-xs">cloud_done</span>Tự động lưu</span>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <button onclick="startPipeline()" class="glow-btn text-white font-bold py-3 px-8 rounded-xl flex items-center gap-2">
+            <span class="material-symbols-outlined">movie_filter</span>Tạo Video 🎬
+          </button>
+          <button onclick="previewVoice()" class="bg-white/5 border border-white/10 text-white py-3 px-6 rounded-xl hover:bg-white/10 transition flex items-center gap-2">
+            <span class="material-symbols-outlined">headphones</span>Nghe thử giọng
+          </button>
+        </div>
+      </section>
+
+      <!-- Middle: Voice & Settings -->
+      <section class="w-[320px] shrink-0 p-6 flex flex-col gap-6 bg-[#1d1a24]/40 border-l border-white/5 overflow-y-auto">
+        <div>
+          <h3 class="font-bold mb-3">Chọn Giọng Đọc</h3>
+          <div id="voiceGrid" class="grid grid-cols-2 gap-2"></div>
+        </div>
+
+        <div class="border-t border-white/5 pt-4 flex flex-col gap-4">
+          <h3 class="font-bold">Cài Đặt</h3>
+          <div>
+            <div class="flex justify-between text-sm mb-1"><label class="text-[#958da1]">Tốc độ đọc</label><span class="text-purple-300 font-bold" id="speedLabel">1.0x</span></div>
+            <input id="speedSlider" type="range" min="-3" max="3" step="0.5" value="1" class="w-full h-1.5 bg-white/10 rounded-lg">
+            <div class="flex justify-between text-[10px] text-[#958da1] mt-1"><span>Chậm</span><span>Nhanh</span></div>
+          </div>
+          <div>
+            <label class="text-sm text-[#958da1] mb-1 block">Kiểu phụ đề</label>
+            <select id="subtitleStyle" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-purple-500">
+              <option value="1">Ali Abdaal</option>
+              <option value="2">Marker Box</option>
+              <option value="3" selected>MrBeast</option>
+              <option value="4">Typewriter</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-sm text-[#958da1] mb-1 block">Vị trí phụ đề</label>
+            <div class="grid grid-cols-2 bg-white/5 rounded-xl p-1">
+              <button data-pos="center" onclick="setPos(this)" class="py-2 text-xs rounded-lg transition">Giữa</button>
+              <button data-pos="bottom" onclick="setPos(this)" class="py-2 text-xs rounded-lg bg-purple-500/20 text-white font-bold active-pos">Dưới</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right: Result Video -->
+      <section class="flex-1 p-6 flex flex-col gap-4 bg-black/60 border-l border-white/5 overflow-y-auto items-center justify-center relative min-w-[350px]">
+        <h3 class="absolute top-6 left-6 font-bold text-lg flex items-center gap-2">
+          <span class="material-symbols-outlined text-purple-400">movie</span> Kết Quả
+        </h3>
+        
+        <!-- Progress Bar (shown when rendering) -->
+        <div class="glass rounded-xl p-6 w-full hidden z-10" id="progressContainer">
+          <div class="flex justify-between text-sm mb-3">
+            <span class="font-bold" id="progressLabel">Sẵn sàng render...</span>
+            <span class="text-purple-300 font-bold" id="progressPct">0%</span>
+          </div>
+          <div class="h-2 bg-white/5 rounded-full overflow-hidden">
+            <div class="h-full progress-glow rounded-full transition-all duration-500" id="progressBar" style="width:0%"></div>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyResultState" class="flex flex-col items-center justify-center text-[#958da1] gap-3">
+          <span class="material-symbols-outlined text-6xl opacity-20">videocam</span>
+          <p class="text-sm">Video của bạn sẽ hiển thị ở đây</p>
+        </div>
+
+        <!-- Video Player -->
+        <div id="videoPreviewContainer" class="hidden flex-col items-center gap-6 w-full h-full justify-center mt-8">
+          <div class="relative rounded-[32px] overflow-hidden border-[8px] border-[#2a2438] shadow-[0_0_50px_rgba(124,58,237,0.15)] bg-black w-[280px] aspect-[9/16]">
+            <video id="resultPlayer" class="w-full h-full object-cover" controls playsinline></video>
+            <div class="absolute bottom-6 right-4 flex flex-col gap-4">
+              <div class="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white cursor-pointer hover:bg-white/30 transition"><span class="material-symbols-outlined">favorite</span></div>
+              <div class="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white cursor-pointer hover:bg-white/30 transition"><span class="material-symbols-outlined">chat</span></div>
+              <div class="w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center text-white cursor-pointer hover:bg-white/30 transition"><span class="material-symbols-outlined">share</span></div>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-3 w-full max-w-[280px]">
+            <button onclick="discardResult()" class="flex-1 py-3 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-xl font-bold transition flex items-center justify-center gap-2 border border-red-500/20">
+              <span class="material-symbols-outlined text-lg">delete</span> Hủy bỏ
+            </button>
+            <button onclick="keepResult()" class="flex-[2] py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white rounded-xl font-bold transition shadow-lg shadow-purple-500/20 flex items-center justify-center gap-2">
+              <span class="material-symbols-outlined text-lg">check_circle</span> Giữ video
+            </button>
+          </div>
+
+          <button id="btnDownload" onclick="downloadVideo()" class="hidden px-8 py-3 bg-white/5 hover:bg-white/10 rounded-xl font-bold flex items-center gap-2 transition border border-white/10">
+            <span class="material-symbols-outlined">download</span> Tải về máy
+          </button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+
+
+  <!-- ==================== PAGE: SETTINGS ==================== -->
+  <div class="page flex-col overflow-y-auto p-6 gap-6" id="page-settings">
+    <h2 class="text-xl font-bold">Cài đặt</h2>
+    <div class="glass rounded-xl p-5 max-w-lg">
+      <h3 class="font-bold mb-3">API Keys</h3>
+      <div class="flex flex-col gap-3">
+        <div><label class="text-xs text-[#958da1]">FPT.AI API Key</label><input type="password" value="SgND63fk1z6RyYH8gzrs7L28cYuAxvi5" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mt-1" readonly></div>
+        <div><label class="text-xs text-[#958da1]">Pexels API Key</label><input type="password" value="Configured" class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm mt-1" readonly></div>
+      </div>
+    </div>
+    <div class="glass rounded-xl p-5 max-w-lg">
+      <h3 class="font-bold mb-3">Thư mục</h3>
+      <div class="flex flex-col gap-2 text-sm text-[#958da1]">
+        <p>📁 Video nền: <code class="text-purple-300">backgrounds/</code></p>
+        <p>🎵 Nhạc nền: <code class="text-purple-300">audio_bg/</code></p>
+        <p>📤 Video xuất: <code class="text-purple-300">output/</code></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="h-8 bg-[#15121b]/90 border-t border-white/5 flex items-center px-6 gap-4 text-[11px] text-[#958da1] shrink-0">
+    <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+    <span>Server: <span class="text-purple-300">localhost:5000</span></span>
+    <span>│</span>
+    <span id="footerStatus">Pipeline: Sẵn sàng</span>
+    <span>│</span>
+    <span>9 giọng (2 Edge + 7 FPT.AI)</span>
+  </div>
+  <!-- VIDEO PLAYER MODAL -->
+  <div id="videoModal" class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm hidden flex-col items-center justify-center p-4">
+    <button onclick="closeVideoModal()" class="absolute top-6 right-6 w-12 h-12 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition">
+      <span class="material-symbols-outlined text-2xl">close</span>
+    </button>
+    <div class="relative w-full max-w-[360px] aspect-[9/16] rounded-[32px] overflow-hidden border-[8px] border-[#2a2438] bg-black shadow-2xl">
+      <video id="modalPlayer" class="w-full h-full object-cover" controls playsinline></video>
+    </div>
+    <div class="mt-6 flex flex-col items-center gap-1 text-center">
+      <h4 id="modalTitle" class="font-bold text-lg max-w-md truncate">Video Title</h4>
+      <p id="modalInfo" class="text-sm text-[#958da1]">Size: 0 MB | 2024</p>
+      <a id="modalDownload" href="#" download class="mt-4 px-10 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-purple-500/20 active:scale-95">
+        <span class="material-symbols-outlined">download</span> Tải xuống Video
+      </a>
+    </div>
+  </div>
+
+</div>
+
+<script src="/webapp/app.js"></script>
+<script>
+function showPage(name, navEl) {
+  localStorage.setItem('activePage', name);
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const page = document.getElementById('page-' + name);
+  if (page) page.classList.add('active');
+  if (navEl) navEl.classList.add('active');
+  const titles = {dashboard:'Dashboard',editor:'Studio Sáng Tạo',settings:'Cài đặt'};
+  document.getElementById('pageTitle').textContent = titles[name] || name;
+  if (name === 'dashboard') loadStats();
+}
+
+function setPos(el) {
+  el.parentElement.querySelectorAll('button').forEach(b => { b.classList.remove('bg-purple-500/20','text-white','font-bold','active-pos'); });
+  el.classList.add('bg-purple-500/20','text-white','font-bold','active-pos');
+}
+
+async function loadBGM() {
+  try {
+    const r = await fetch(API+'/bgm');
+    const files = await r.json();
+    const el = document.getElementById('bgmList');
+    if (!el) return;
+    if (files.length === 0) { el.innerHTML = '<p class="text-xs text-[#958da1]">Chưa có nhạc. Thêm file MP3 vào audio_bg/</p>'; return; }
+    el.innerHTML = '';
+    files.forEach(f => {
+      const item = document.createElement('div');
+      item.className = 'flex items-center gap-2 p-2 bg-white/5 rounded-lg text-xs';
+      item.innerHTML = `<span class="material-symbols-outlined text-purple-400 text-lg">music_note</span><span class="flex-1">${f.name}</span><span class="text-[#958da1]">${f.size_mb}MB</span>`;
+      el.appendChild(item);
+    });
+  } catch(e) {}
+}
+
+// Duplicate output list for render page
+const origLoadOutputs = loadOutputs;
+loadOutputs = async function() {
+  await origLoadOutputs();
+  const src = document.getElementById('outputList');
+  const dst = document.getElementById('outputList2');
+  if (src && dst) dst.innerHTML = src.innerHTML;
+};
+
+// Poll pipeline status
+setInterval(async () => {
+  try {
+    const r = await fetch(API+'/pipeline/status');
+    const d = await r.json();
+    const el = document.getElementById('footerStatus');
+    const st = document.getElementById('statusText');
+    if (d.running) {
+      if (el) el.textContent = `Pipeline: ${d.message} (${d.progress}%)`;
+      if (st) { st.textContent = `🔄 ${d.progress}%`; st.style.color = '#d2bbff'; }
+      updateProgress(d.progress, d.message);
+    } else if (d.step === 'done') {
+      if (el) el.textContent = 'Pipeline: ✅ Hoàn tất!';
+      if (st) { st.textContent = '● Hoàn tất'; st.style.color = '#45dfa4'; }
+    } else if (d.error) {
+      if (el) el.textContent = 'Pipeline: ❌ Lỗi';
+      if (st) { st.textContent = '● Lỗi'; st.style.color = '#ffb4ab'; }
+    } else {
+      if (el) el.textContent = 'Pipeline: Sẵn sàng';
+      if (st) { st.textContent = '● Sẵn sàng'; st.style.color = '#958da1'; }
+    }
+  } catch(e) {}
+}, 2000);
+</script>
+</body>
+</html>
