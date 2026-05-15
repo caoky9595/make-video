@@ -10,34 +10,86 @@ API Key miễn phí, không giới hạn, không watermark.
 import os
 import re
 import requests
+import random
+import urllib.parse
 from dotenv import load_dotenv
 
 # Tải biến môi trường từ file .env
 load_dotenv()
 
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
+
 # Cấu hình Video Nền Thôi Miên (Satisfying Loops) dành riêng cho Kênh kể truyện
 # Thay vì lấy cảnh văn phòng nhàm chán, hệ thống sẽ ưu tiên trích xuất Lofi chill
-KEYWORD_MAP = {
-    r"\bsợ\b": "creepy dark forest",
-    r"\bma\b": "scary dark",
-    r"\bác\b": "spooky dark background",
-    r"\bđêm\b": "driving night city rain",
-    r"\bbuồn\b": "rainy window aesthetic",
-    r"\bkhóc\b": "rain drops window",
-    r"\bcô đơn\b": "night sky clouds",
-    r"\btình yêu\b": "romantic sunset aesthetic",
-    r"\bchill\b": "lofi aesthetic",
-    r"\bmưa\b": "heavy rain cinematic",
-}
-
-# Fallback: Ưu tiên video Lofi như user yêu cầu
+# Fallback: Ưu tiên video Cinematic nếu Gemini lỗi
 FALLBACK_KEYWORDS = [
-    "lofi aesthetic",
-    "lofi chilling anime",
-    "relaxing lofi background",
-    "cozy lofi room aesthetic",
-    "vaporwave aesthetic loop",
+    "cinematic landscape 4k",
+    "abstract colorful motion",
+    "calm nature 4k vertical",
+    "cyberpunk city aesthetic",
+    "minimalist clean background",
 ]
+
+def generate_visual_keywords_with_gemini(script_text):
+    """Sử dụng Gemini để tạo danh sách từ khóa hình ảnh chuyên nghiệp."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return ["cinematic background"]
+        
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
+    prompt = f"""Phân tích kịch bản sau và đề xuất 5 cụm từ tìm kiếm video/hình ảnh (bằng tiếng Anh) để làm nền cho video TikTok.
+    Mục tiêu: Tạo ra hình ảnh mãn nhãn, sang trọng, có tính thẩm mỹ cao (Aesthetic) để bán hàng Affiliate.
+
+    Yêu cầu:
+    1. Các từ khóa phải tập trung vào không gian (vibe), ánh sáng và cảm xúc (ví dụ: 'soft morning sunlight in a minimal bedroom', 'sleek desk setup with warm desk lamp').
+    2. Nếu kịch bản về triết lý, hãy dùng phong cách u tối, cổ điển (ví dụ: 'ancient greek statue in dramatic shadows', 'dark library with candle light').
+    3. Trả về dưới dạng JSON array: ["keyword1", "keyword2", ...]
+    
+    Kịch bản: {script_text[:1000]}
+    """
+    
+    import urllib.request
+    import json
+    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"response_mime_type": "application/json"}}
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            content = result["candidates"][0]["content"]["parts"][0]["text"]
+            keywords = json.loads(content)
+            return keywords if isinstance(keywords, list) else ["cinematic background"]
+    except Exception as e:
+        print(f"  [AI Keywords] Error: {e}")
+        return ["cinematic background"]
+
+def download_ai_image(prompt, output_dir="backgrounds"):
+    """Tạo và tải ảnh AI từ Pollinations.ai (Miễn phí, không giới hạn)."""
+    os.makedirs(output_dir, exist_ok=True)
+    import random
+    import urllib.parse
+    
+    # Làm cho prompt đa dạng và sang trọng hơn cho Affiliate
+    seed = random.randint(1, 999999)
+    # Thêm các modifier để ảnh trông "đắt tiền" và "sạch sẽ" hơn
+    aesthetic_modifiers = "high-end photography, soft lighting, minimalist, clean composition, 8k resolution, cinematic color grading, vertical 9:16"
+    safe_prompt = urllib.parse.quote(f"{prompt}, {aesthetic_modifiers}")
+    url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1080&height=1920&seed={seed}&nologo=true"
+    
+    filename = f"ai_image_{seed}.jpg"
+    filepath = os.path.join(output_dir, filename)
+    
+    print(f"  [AI Image] Generating: {filename} for '{prompt}'...")
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        with open(filepath, "wb") as f:
+            f.write(resp.content)
+        print(f"  [AI Image] ✅ Saved: {filename}")
+        return filepath
+    except Exception as e:
+        print(f"  [AI Image] Error: {e}")
+        return None
 
 
 def get_api_key():
@@ -77,6 +129,23 @@ def extract_keywords(script_text: str, max_keywords: int = 3):
     return matched
 
 
+def search_pixabay_videos(query: str, api_key: str, per_page: int = 5):
+    """Tìm video trên Pixabay API."""
+    if not api_key: return []
+    url = "https://pixabay.com/api/videos/"
+    params = {
+        "key": api_key,
+        "q": query,
+        "video_type": "all",
+        "per_page": per_page
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        data = resp.json()
+        return data.get("hits", [])
+    except:
+        return []
+
 def search_pexels_videos(query: str, api_key: str, orientation: str = "portrait", per_page: int = 5):
     """
     Tìm video trên Pexels API.
@@ -108,6 +177,28 @@ def search_pexels_videos(query: str, api_key: str, orientation: str = "portrait"
         print(f"  [Pexels] Error searching: {e}")
         return []
 
+
+def download_pixabay_video(video_data: dict, output_dir: str = "backgrounds"):
+    """Tải video từ Pixabay."""
+    videos = video_data.get("videos", {})
+    # Ưu tiên bản medium hoặc small mp4
+    best_v = videos.get("medium") or videos.get("small") or videos.get("tiny")
+    if not best_v: return None
+    
+    video_url = best_v["url"]
+    filename = f"pixabay_{video_data['id']}.mp4"
+    filepath = os.path.join(output_dir, filename)
+    
+    if os.path.exists(filepath): return filepath
+    
+    try:
+        resp = requests.get(video_url, stream=True, timeout=60)
+        with open(filepath, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+        return filepath
+    except:
+        return None
 
 def download_video(video_data: dict, output_dir: str = "backgrounds"):
     """
@@ -177,50 +268,47 @@ def download_video(video_data: dict, output_dir: str = "backgrounds"):
         return None
 
 
-def find_and_download_background(script_text: str, output_dir: str = "backgrounds", max_downloads: int = 2):
+def find_and_download_background(script_text: str, output_dir: str = "backgrounds", max_downloads: int = 5):
     """
-    Hàm chính: Đọc kịch bản → Trích từ khoá → Tìm trên Pexels → Tải video nền.
-
-    Args:
-        script_text: Nội dung kịch bản tiếng Việt
-        output_dir: Thư mục lưu video nền
-        max_downloads: Số video tải về tối đa mỗi lần
-
-    Returns:
-        List đường dẫn các file đã tải
+    Hàm chính nâng cấp: Gemini Keywords -> Pexels Video -> Pollinations AI Image (Fallback/Mix).
     """
     api_key = get_api_key()
-    if not api_key:
-        return []
-
-    # Trích xuất từ khoá
-    keywords = extract_keywords(script_text)
-    print(f"  [Pexels] Keywords extracted: {keywords}")
+    
+    # 1. Dùng Gemini để tạo từ khóa xịn
+    print("  [AI Visual] Đang phân tích kịch bản bằng Gemini...")
+    keywords = generate_visual_keywords_with_gemini(script_text)
+    print(f"  [AI Visual] Từ khóa đề xuất: {keywords}")
 
     downloaded = []
-    for keyword in keywords:
-        print(f"  [Pexels] Searching for: '{keyword}'...")
-        videos = search_pexels_videos(keyword, api_key)
+    
+    # 2. Thử tìm Video trên Pexels trước
+    if api_key:
+        for keyword in keywords[:3]: # Thử 3 từ khóa đầu cho video
+            print(f"  [Pexels] Đang tìm video cho: '{keyword}'...")
+            videos = search_pexels_videos(keyword, api_key, per_page=3)
+            
+            for video in videos:
+                path = download_video(video, output_dir)
+                if path:
+                    downloaded.append(path)
+                    if len(downloaded) >= 3: # Lấy tối đa 3 video thực tế
+                        break
+            if len(downloaded) >= 3:
+                break
 
-        if not videos:
-            print(f"  [Pexels] No results for '{keyword}'")
-            continue
-
-        # Tải video đầu tiên tìm được
-        for video in videos[:max_downloads]:
-            path = download_video(video, output_dir)
-            if path:
-                downloaded.append(path)
-                if len(downloaded) >= max_downloads:
-                    break
-
+    # 3. Luôn tạo thêm 2-3 Ảnh AI để đảm bảo tính độc nhất và không bị lặp
+    print("  [AI Image] Đang tạo thêm ảnh AI để video không bị nhàm chán...")
+    for keyword in keywords[-3:]: # Dùng các từ khóa còn lại cho ảnh AI
+        path = download_ai_image(keyword, output_dir)
+        if path:
+            downloaded.append(path)
         if len(downloaded) >= max_downloads:
             break
 
     if downloaded:
-        print(f"\n  [Pexels] ✅ Tổng cộng tải {len(downloaded)} video nền mới.")
+        print(f"\n  [Visual Engine] ✅ Đã chuẩn bị {len(downloaded)} tài nguyên (Video thực tế + Ảnh AI).")
     else:
-        print(f"\n  [Pexels] ⚠️  Không tải được video. Sẽ dùng video có sẵn trong '{output_dir}/'.")
+        print(f"\n  [Visual Engine] ⚠️ Cảnh báo: Không tải được tài nguyên mới.")
 
     return downloaded
 

@@ -31,7 +31,7 @@ from moviepy.editor import (
     concatenate_videoclips,
     afx
 )
-from stickman_engine import StickmanEngine
+
 
 # ============================================================
 # CẤU HÌNH VIDEO (Chỉnh sửa tại đây nếu muốn)
@@ -192,6 +192,12 @@ def _render_text_frame(text: str, font, width: int, height: int, active_idx: int
                 # Typewriter
                 draw.text((x, y), word, font=font, fill=(255,255,255,255))
                 
+            elif style_mode == 5:
+                # Soft Aesthetic (Affiliate Style)
+                # Smaller, elegant, with a very subtle shadow
+                draw.text((x+2, y+2), word, font=font, fill=(0,0,0,80)) # Subtle shadow
+                draw.text((x, y), word, font=font, fill=(255, 255, 255, 255)) # Pure white
+                
             x += w_width + space_width
             
         y += single_line_h
@@ -301,31 +307,42 @@ def _collect_visual_sources(
 
 
 def _prepare_image_background(image_path: str, duration: float):
-    """Chuẩn bị nền từ ảnh tĩnh (crop/resize về 1080x1920, giữ nguyên suốt duration)."""
-    clip = ImageClip(image_path)
-    clip_ratio = clip.w / clip.h
+    """Chuẩn bị nền từ ảnh tĩnh với hiệu ứng Cinematic Zoom (Ken Burns)."""
+    # Load image with PIL to get size
+    img = Image.open(image_path)
+    img_w, img_h = img.size
+    
+    # Resize sao cho phủ kín 1080x1920 (crop trung tâm)
     target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT
-
-    if clip_ratio > target_ratio:
-        clip = clip.resize(height=VIDEO_HEIGHT)
-        x_center = clip.w / 2
-        clip = clip.crop(
-            x1=x_center - VIDEO_WIDTH / 2,
-            x2=x_center + VIDEO_WIDTH / 2,
-            y1=0,
-            y2=VIDEO_HEIGHT,
-        )
+    img_ratio = img_w / img_h
+    
+    if img_ratio > target_ratio:
+        new_h = VIDEO_HEIGHT
+        new_w = int(new_h * img_ratio)
     else:
-        clip = clip.resize(width=VIDEO_WIDTH)
-        y_center = clip.h / 2
-        clip = clip.crop(
-            x1=0,
-            x2=VIDEO_WIDTH,
-            y1=y_center - VIDEO_HEIGHT / 2,
-            y2=y_center + VIDEO_HEIGHT / 2,
-        )
+        new_w = VIDEO_WIDTH
+        new_h = int(new_w / img_ratio)
+        
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    
+    # Hàm tạo frame với hiệu ứng zoom
+    def make_frame(t):
+        # Zoom từ 100% lên 115% trong suốt duration
+        zoom = 1.0 + (t / duration) * 0.15
+        curr_w = int(new_w * zoom)
+        curr_h = int(new_h * zoom)
+        
+        # Resize frame
+        frame_img = img.resize((curr_w, curr_h), Image.LANCZOS)
+        
+        # Crop center
+        left = (curr_w - VIDEO_WIDTH) // 2
+        top = (curr_h - VIDEO_HEIGHT) // 2
+        frame_img = frame_img.crop((left, top, left + VIDEO_WIDTH, top + VIDEO_HEIGHT))
+        
+        return np.array(frame_img.convert("RGB"))
 
-    return clip.set_duration(duration)
+    return VideoClip(make_frame, duration=duration)
 
 
 def _prepare_visual_background(asset_path: str, duration: float):
@@ -431,28 +448,52 @@ def make_video(
         except Exception as e:
             print(f"  [Audio] ⚠️ Failed to mix BGM: {e}")
 
-    # 2. Chuẩn bị video nền
-    if video_mode == "stickman":
-        print("  [Video] Mode: Stickman Meme Animation")
-        engine = StickmanEngine()
-        # Tạo một background clip trắng hoàn toàn, sau đó chúng sẽ vẽ stickman lên từng frame
-        bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(255, 255, 255), duration=duration)
+    # 2. Chuẩn bị video nền (Multi-Scene)
+    visual_sources = _collect_visual_sources(
+        bg_dir=bg_dir,
+        image_dir=image_dir,
+        visual_mode=visual_mode,
+        uploaded_images=uploaded_images,
+    )
+    
+    if video_mode == "veo":
+        # Veo mode vẫn dùng 1 file duy nhất do giá thành cao
+        bg_path = os.path.join(bg_dir, "veo_generated.mp4")
+        bg_clip = _prepare_visual_background(bg_path, duration)
+    elif not visual_sources:
+        bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(30, 30, 30), duration=duration)
     else:
-        print(f"  [Video] Mode: Realistic ({visual_mode})")
-        visual_sources = _collect_visual_sources(
-            bg_dir=bg_dir,
-            image_dir=image_dir,
-            visual_mode=visual_mode,
-            uploaded_images=uploaded_images,
-        )
-        if not visual_sources:
-            # Fallback nếu không có visual nào
-            print("  [Video] ⚠️ No visual sources found, using white background.")
-            bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(255, 255, 255), duration=duration)
+        # LOGIC MULTI-SCENE: Chia nhỏ thời lượng theo subtitle
+        print(f"  [Video] Multi-Scene mode: Đang ghép nối {len(visual_sources)} tài nguyên...")
+        
+        # Lấy danh sách sub để chia đoạn
+        subs = _parse_srt(srt_path)
+        if not subs:
+            # Fallback nếu không có sub
+            bg_clip = _prepare_visual_background(random.choice(visual_sources), duration)
         else:
-            bg_path = random.choice(visual_sources)
-            print(f"  [Background] Selected: {os.path.basename(bg_path)}")
-            bg_clip = _prepare_visual_background(bg_path, duration)
+            scene_clips = []
+            random.shuffle(visual_sources) # Xáo trộn để tránh lặp lại
+            
+            # Chia đều các visual cho các câu thoại
+            for i, sub in enumerate(subs):
+                start_t = sub["start"]
+                end_t = subs[i+1]["start"] if i+1 < len(subs) else duration
+                scene_duration = end_t - start_t
+                
+                # Mỗi câu chọn 1 visual khác nhau (xoay vòng nếu hết)
+                asset_p = visual_sources[i % len(visual_sources)]
+                try:
+                    s_clip = _prepare_visual_background(asset_p, scene_duration)
+                    scene_clips.append(s_clip.set_start(start_t))
+                except Exception as e:
+                    print(f"  [Video] ⚠️ Lỗi khi nạp '{asset_p}': {e}")
+
+            if not scene_clips:
+                bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(30, 30, 30), duration=duration)
+            else:
+                bg_clip = CompositeVideoClip(scene_clips, size=(VIDEO_WIDTH, VIDEO_HEIGHT))
+
 
     # 3. Parse subtitles từ SRT
     subs = _parse_srt(srt_path)
@@ -523,44 +564,9 @@ def make_video(
                         break
                 break
         
-        if video_mode == "stickman":
-            if active_sub_idx != -1:
-                sub_text = subs[active_sub_idx]["text"]
-                emotion = engine._analyze_emotion(sub_text)
-                
-                # Logic Acting & Camera
-                if emotion == "angry" or emotion == "surprised":
-                    curr_scale = 1.3 # Zoom nhẹ
-                    curr_offset_y = 100 # Đẩy xuống để thấy mặt rõ hơn
-                    shake_intensity = 5 # Rung nhẹ
-                elif emotion == "sad":
-                    curr_scale = 1.1
-                    curr_offset_y = 50
-                elif any(w in sub_text.lower() for w in ["chạy", "nhanh", "flash", "phóng"]):
-                    # Di chuyển nhân vật từ trái sang phải dựa trên thời gian trong sub
-                    sub_duration = subs[active_sub_idx]["end"] - subs[active_sub_idx]["start"]
-                    progress = (t - subs[active_sub_idx]["start"]) / sub_duration
-                    curr_offset_x = -600 + (progress * 1200) # Chạy ngang
-                    shake_intensity = 10 # Rung mạnh khi chạy
-                
-                # Thêm độ rung ngẫu nhiên nếu có shake_intensity
-                if shake_intensity > 0:
-                    curr_offset_x += random.uniform(-shake_intensity, shake_intensity)
-                    curr_offset_y += random.uniform(-shake_intensity, shake_intensity)
-                
-                # Render Stickman Frame
-                bg_frame = engine.render_frame_to_array(
-                    sub_text, VIDEO_WIDTH, VIDEO_HEIGHT, 
-                    t=t, seed=active_sub_idx,
-                    offset_x=curr_offset_x, offset_y=curr_offset_y, scale=curr_scale
-                ).astype(np.float32)
-            else:
-                # Nền trắng nếu không có sub
-                bg_frame = np.full((VIDEO_HEIGHT, VIDEO_WIDTH, 3), 255, dtype=np.float32)
-        else:
-            bg_frame = get_frame(t).astype(np.float32)
-            # Phủ overlay tối (chỉ cho Realistic mode)
-            bg_frame = bg_frame * (1 - OVERLAY_OPACITY)
+        bg_frame = get_frame(t).astype(np.float32)
+        # Phủ overlay tối (chỉ cho Realistic mode)
+        bg_frame = bg_frame * (1 - OVERLAY_OPACITY)
         
         # Subtitle Overlay
         sub_rgba = None

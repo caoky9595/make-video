@@ -403,9 +403,9 @@ def _build_words_json(word_boundaries: list) -> list:
 # MAIN ENTRY POINT
 # ============================================================
 
-async def generate_tts(text_file: str, output_audio: str, output_srt: str, rate: str = "+20%", voice: str = "hoaimy"):
+async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+20%", voice: str = "hoaimy", raw_text_input: str = None):
     """
-    Đọc file kịch bản, sinh ra audio MP3 và subtitle SRT.
+    Đọc file kịch bản hoặc nhận text trực tiếp, sinh ra audio MP3 và subtitle SRT.
 
     Args:
         text_file: Đường dẫn tới file kịch bản (.txt)
@@ -414,12 +414,15 @@ async def generate_tts(text_file: str, output_audio: str, output_srt: str, rate:
         rate: Tốc độ đọc. Ví dụ: "+0%" (bình thường), "+20%" (nhanh hơn 20%),
               "-15%" (chậm hơn 15%), "+50%" (nhanh gấp rưỡi).
         voice: Tên giọng đọc. Xem danh sách bằng --list-voices.
+        raw_text_input: Nội dung text trực tiếp (nếu truyền thì bỏ qua text_file).
     """
-    if not os.path.exists(text_file):
-        raise FileNotFoundError(f"Cannot find script file: {text_file}")
-
-    with open(text_file, "r", encoding="utf-8") as f:
-        raw_text = f.read()
+    if raw_text_input:
+        raw_text = raw_text_input
+    else:
+        if not text_file or not os.path.exists(text_file):
+            raise FileNotFoundError(f"Cannot find script file: {text_file}")
+        with open(text_file, "r", encoding="utf-8") as f:
+            raw_text = f.read()
 
     # Parse kịch bản: tách lời đọc, bỏ chú thích
     text = parse_script(raw_text)
@@ -450,9 +453,9 @@ async def generate_tts(text_file: str, output_audio: str, output_srt: str, rate:
     print(f"  [TTS] ✅ Word timing saved: {words_json_path}")
 
 
-def run_tts(text_file: str, output_audio: str, output_srt: str, rate: str = "+20%", voice: str = "hoaimy"):
+def run_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+20%", voice: str = "hoaimy", raw_text_input: str = None):
     """Wrapper đồng bộ cho generate_tts."""
-    asyncio.run(generate_tts(text_file, output_audio, output_srt, rate=rate, voice=voice))
+    asyncio.run(generate_tts(text_file, output_audio, output_srt, rate=rate, voice=voice, raw_text_input=raw_text_input))
 
 
 if __name__ == "__main__":

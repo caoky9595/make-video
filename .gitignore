@@ -1,5 +1,6 @@
 # Dependencies & temp files
 .venv/
+venv/
 __pycache__/
 *.pyc
 temp/
@@ -17,3 +18,13 @@ config.json
 *.vtt
 .env
 *.jpg
+
+# Persistence & Logs
+profiles/
+data/
+logs/
+processed/
+raw_videos/
+node_modules/
+dist/
+build/

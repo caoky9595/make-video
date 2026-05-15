@@ -1,24 +1,35 @@
 #!/usr/bin/env python3
 """
-main.py - TikTok Video Auto-Creator Pipeline
-=============================================
-Hệ thống tạo video TikTok tự động.
+main.py - TikTok Affiliate Automation Pipeline
+================================================
+Hệ thống tự động hoá TikTok Affiliate: Tải video → Xử lý → Tạo TTS →
+Render → Đăng lên nhiều tài khoản.
+
+Chế độ hoạt động:
+  1. CREATE   — Tạo video từ kịch bản (giữ nguyên chức năng cũ)
+  2. PROCESS  — Tải + xử lý video từ nguồn bên ngoài (Douyin, TikTok...)
+  3. FULL     — Pipeline đầy đủ: Process → TTS → Render → Upload
+  4. NICK     — Quản lý tài khoản
 
 Cách dùng:
-    # Tạo video từ kịch bản
-    python main.py
+    # === Chế độ cũ (tạo video từ kịch bản) ===
+    python main.py create --script script.txt
+    python main.py create --script script.txt --upload
 
-    # Tạo video + tự động upload lên TikTok
-    python main.py --upload
+    # === Chế độ mới (affiliate pipeline) ===
+    python main.py process --url "https://douyin.com/xxx" --hook "Đừng mua khi chưa xem!"
+    python main.py process --file "raw_video.mp4"
+    python main.py process --batch data/sources.csv
 
-    # Đăng nhập TikTok (chỉ cần làm 1 lần)
-    python main.py --login
+    # === Pipeline đầy đủ ===
+    python main.py full --url "https://douyin.com/xxx" --tts-script "Mùa hè nóng quá..."
+    python main.py full --batch data/sources.csv --nick nick_01
 
-    # Chỉ định file kịch bản khác
-    python main.py --script my_script.txt
-
-    # Chỉ định tiêu đề và hashtag
-    python main.py --upload --title "Review tool AI" --tags fyp,viral,review
+    # === Quản lý nick ===
+    python main.py nick list
+    python main.py nick add nick_01
+    python main.py nick login nick_01
+    python main.py nick plan
 """
 
 import argparse
@@ -27,135 +38,26 @@ import sys
 
 from tts import run_tts
 from video_maker import make_video
-from uploader import login_tiktok, upload_video
+from uploader import login_tiktok, upload_video, upload_queue
 from bg_finder import find_and_download_background
+from video_processor import download_video, process_video, batch_process
+from caption_builder import build_caption, auto_select_format
+from nick_manager import (
+    add_nick, remove_nick, list_nicks,
+    get_upload_plan, record_upload, get_available_nicks,
+)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="🎬 TikTok Video Auto-Creator Pipeline",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Ví dụ sử dụng:
-  python main.py                              # Tạo video từ script.txt
-  python main.py --script idea.txt            # Tạo video từ file khác
-  python main.py --upload                     # Tạo video + upload TikTok
-  python main.py --login                      # Đăng nhập TikTok lần đầu
-  python main.py --upload --title "Mẹo hay"   # Upload với tiêu đề tùy chỉnh
-        """,
-    )
+# ============================================================
+# COMMAND: CREATE (giữ nguyên chức năng cũ)
+# ============================================================
 
-    parser.add_argument(
-        "--script",
-        default="script.txt",
-        help="Đường dẫn tới file kịch bản (mặc định: script.txt)",
-    )
-    parser.add_argument(
-        "--upload",
-        action="store_true",
-        help="Tự động upload video lên TikTok sau khi render",
-    )
-    parser.add_argument(
-        "--login",
-        action="store_true",
-        help="Mở trình duyệt để đăng nhập TikTok (lưu cookie)",
-    )
-    parser.add_argument(
-        "--title",
-        default="",
-        help="Tiêu đề/Caption cho video TikTok",
-    )
-    parser.add_argument(
-        "--tags",
-        default="fyp,viral,tiktokvietnam,review,affiliate",
-        help="Hashtag cho video, ngăn cách bằng dấu phẩy (mặc định: fyp,viral,...)",
-    )
-    parser.add_argument(
-        "--output",
-        default="output/final_video.mp4",
-        help="Đường dẫn file video đầu ra (mặc định: output/final_video.mp4)",
-    )
-    parser.add_argument(
-        "--style",
-        type=int,
-        default=1,
-        choices=[1, 2, 3, 4],
-        help="Kiểu dáng subtitle: 1 (Ali Abdaal - Mặc định), 2 (Marker Box), 3 (MrBeast), 4 (Typewriter)",
-    )
-    parser.add_argument(
-        "--position",
-        default="bottom",
-        choices=["center", "bottom"],
-        help="Vị trí subtitle: 'center' (giữa) hoặc 'bottom' (dưới - mặc định)",
-    )
-    parser.add_argument(
-        "--bg-dir",
-        default="backgrounds",
-        help="Thư mục chứa video nền (mặc định: backgrounds/)",
-    )
-    parser.add_argument(
-        "--bgm-dir",
-        default="audio_bg",
-        help="Thư mục chứa file nhạc nền (mặc định: audio_bg/)",
-    )
-    parser.add_argument(
-        "--rate",
-        default="+20%",
-        help="Tốc độ đọc. VD: '+0%%' (bình thường), '+20%%' (nhanh hơn), '-15%%' (chậm hơn). Mặc định: +20%%",
-    )
-    parser.add_argument(
-        "--auto-split",
-        action="store_true",
-        help="Sử dụng AI Google Gemini để cắt cốt truyện dài thành nhiều Phần (Part 1, Part 2) tại vị trí gay cấn nhất.",
-    )
-    parser.add_argument(
-        "--auto-bg",
-        action="store_true",
-        default=True,
-        help="Tự động tìm và tải video nền từ Pexels nếu thư mục backgrounds/ trống (mặc định: bật)",
-    )
-    parser.add_argument(
-        "--no-auto-bg",
-        action="store_true",
-        help="Tắt tự động tải video nền, chỉ dùng video có sẵn trong backgrounds/",
-    )
-    parser.add_argument(
-        "--voice",
-        default="hoaimy",
-        choices=["hoaimy", "namminh", "banmai", "thuminh", "leminh", "myan", "giahuy", "lannhi", "linhsan"],
-        help=(
-            "Giọng đọc. Edge-TTS: 'hoaimy' (nữ Bắc), 'namminh' (nam Bắc). "
-            "FPT.AI: 'banmai' (nữ Bắc), 'thuminh' (nữ Bắc), 'leminh' (nam Bắc), "
-            "'myan' (nữ Trung), 'giahuy' (nam Trung), 'lannhi' (nữ Nam), 'linhsan' (nữ Nam). "
-            "Mặc định: hoaimy"
-        ),
-    )
-    parser.add_argument(
-        "--list-voices",
-        action="store_true",
-        help="Hiển thị danh sách tất cả giọng đọc có sẵn và thoát",
-    )
-
-    args = parser.parse_args()
-
-    # === Hiển thị danh sách giọng đọc ===
-    if args.list_voices:
-        from tts import list_voices
-        list_voices()
-        return
-
-    # === Chế độ đăng nhập TikTok ===
-    if args.login:
-        login_tiktok()
-        return
-
-    # === Kiểm tra file kịch bản ===
+def cmd_create(args):
+    """Tạo video từ kịch bản text (chế độ cũ)."""
     if not os.path.exists(args.script):
         print(f"❌ Không tìm thấy file kịch bản: {args.script}")
-        print(f"   Hãy tạo file '{args.script}' với nội dung kịch bản video của bạn.")
         sys.exit(1)
 
-    # Đọc nội dung kịch bản
     with open(args.script, "r", encoding="utf-8") as f:
         script_text = f.read().strip()
 
@@ -168,11 +70,11 @@ Ví dụ sử dụng:
                 sys.exit(1)
             elif len(result) > 1:
                 script_parts = result
-                print(f"  [AI Splitter] ✅ Đã chia thành {len(script_parts)} phần độc lập!")
+                print(f"  [AI Splitter] ✅ Đã chia thành {len(script_parts)} phần!")
         except ImportError:
             print("❌ Không tìm thấy module ai_splitter.py")
 
-    # === Tự động tìm video nền nếu cần ===
+    # Tự động tìm video nền nếu cần
     supported = (".mp4", ".mov", ".avi", ".mkv", ".webm")
     os.makedirs(args.bg_dir, exist_ok=True)
     bg_videos = [f for f in os.listdir(args.bg_dir) if f.lower().endswith(supported)]
@@ -180,16 +82,13 @@ Ví dụ sử dụng:
     if not bg_videos and args.auto_bg and not args.no_auto_bg:
         print("\n🔍 Không có video nền. Tự động tìm trên Pexels...")
         find_and_download_background(script_text, output_dir=args.bg_dir)
-        # Kiểm tra lại sau khi tải
         bg_videos = [f for f in os.listdir(args.bg_dir) if f.lower().endswith(supported)]
 
     if not bg_videos:
-        print(f"❌ Không tìm thấy video nền nào trong '{args.bg_dir}/'.")
-        print(f"   Hãy tải video dọc (9:16) từ Pexels.com và bỏ vào thư mục này.")
-        print(f"   Hoặc chạy lại với flag --auto-bg để tự động tải.")
+        print(f"❌ Không tìm thấy video nền trong '{args.bg_dir}/'")
         sys.exit(1)
 
-    # === Chuẩn bị nhạc nền BGM (nếu có) ===
+    # Nhạc nền
     os.makedirs(args.bgm_dir, exist_ok=True)
     bgm_files = [f for f in os.listdir(args.bgm_dir) if f.lower().endswith((".mp3", ".wav", ".ogg"))]
     bgm_path = None
@@ -197,72 +96,276 @@ Ví dụ sử dụng:
         import random
         bgm_path = os.path.join(args.bgm_dir, random.choice(bgm_files))
 
-    # === Pipeline chính ===
+    # Pipeline
     print("=" * 60)
-    print("🎬 TIKTOK VIDEO AUTO-CREATOR")
+    print("🎬 TIKTOK VIDEO CREATOR (từ kịch bản)")
     print("=" * 60)
 
     for i, part_text in enumerate(script_parts):
         part_num = i + 1
-        is_multi_part = len(script_parts) > 1
+        is_multi = len(script_parts) > 1
 
-        if is_multi_part:
-            print(f"\n" + "="*50)
-            print(f"🔄 ĐANG XỬ LÝ PHẦN {part_num}/{len(script_parts)}")
-            print("="*50)
-            
-            # Ghi text tạm
+        if is_multi:
+            print(f"\n{'='*50}\n🔄 PHẦN {part_num}/{len(script_parts)}\n{'='*50}")
             temp_script = f"temp/script_part{part_num}.txt"
+            os.makedirs("temp", exist_ok=True)
             with open(temp_script, "w", encoding="utf-8") as f:
                 f.write(part_text)
             current_script = temp_script
-            
-            audio_path = os.path.join("temp", f"audio_part{part_num}.mp3")
-            srt_path = os.path.join("temp", f"subtitles_part{part_num}.srt")
-            
+            audio_path = f"temp/audio_part{part_num}.mp3"
+            srt_path = f"temp/subtitles_part{part_num}.srt"
             base, ext = os.path.splitext(args.output)
             current_output = f"{base}_part{part_num}{ext}"
         else:
             current_script = args.script
-            audio_path = os.path.join("temp", "audio.mp3")
-            srt_path = os.path.join("temp", "subtitles.srt")
+            audio_path = "temp/audio.mp3"
+            srt_path = "temp/subtitles.srt"
             current_output = args.output
 
-        # Bước 1: Text-to-Speech
-        print("\n📌 BƯỚC 1: Tạo giọng đọc từ kịch bản...")
-        print(f"   Script: {current_script}")
-        print(f"   Tốc độ đọc: {args.rate}")
-        print(f"   Giọng đọc: {args.voice}")
+        print(f"\n📌 BƯỚC 1: TTS...")
         run_tts(current_script, audio_path, srt_path, rate=args.rate, voice=args.voice)
 
-        # Bước 2: Render Video
-        print("\n📌 BƯỚC 2: Render video...")
+        print(f"\n📌 BƯỚC 2: Render...")
         final_video = make_video(
-            audio_path=audio_path,
-            srt_path=srt_path,
-            bg_dir=args.bg_dir,
-            output_path=current_output,
-            style=args.style,
-            position=args.position,
-            bgm_path=bgm_path,
+            audio_path=audio_path, srt_path=srt_path,
+            bg_dir=args.bg_dir, output_path=current_output,
+            style=args.style, position=args.position, bgm_path=bgm_path,
         )
 
-        # Bước 3: Upload (nếu có flag --upload)
         if args.upload:
-            print("\n📌 BƯỚC 3: Upload lên TikTok...")
+            print(f"\n📌 BƯỚC 3: Upload...")
             tags = [t.strip() for t in args.tags.split(",") if t.strip()]
-            upload_title = f"{args.title} (Phần {part_num})" if args.title and is_multi_part else args.title
-            upload_video(
-                video_path=final_video,
-                title=upload_title,
-                tags=tags,
-            )
+            title = f"{args.title} (Phần {part_num})" if args.title and is_multi else args.title
+            upload_video(video_path=final_video, title=title, tags=tags, nick_name=args.nick)
         else:
-            print(f"\n✅ Xong {'Phần ' + str(part_num) if is_multi_part else 'Video'}! Tệp xuất tại: {final_video}")
+            print(f"\n✅ Video xong: {final_video}")
 
-    print("\n" + "=" * 60)
-    print("🎉 HOÀN TẤT TOÀN BỘ CHƯƠNG TRÌNH!")
+    print(f"\n{'='*60}\n🎉 HOÀN TẤT!\n{'='*60}")
+
+
+# ============================================================
+# COMMAND: PROCESS (tải + xử lý video nguồn)
+# ============================================================
+
+def cmd_process(args):
+    """Tải và xử lý video từ nguồn bên ngoài."""
     print("=" * 60)
+    print("🏭 CONTENT FACTORY")
+    print("=" * 60)
+
+    if args.batch:
+        results = batch_process(args.batch)
+        print(f"\n✅ {len(results)} video đã xử lý xong trong processed/")
+
+    elif args.url:
+        raw = download_video(args.url)
+        if raw:
+            output = process_video(raw, hook_text=args.hook, cta_text=args.cta, bg_music=getattr(args, 'bg_music', None))
+            if output:
+                print(f"\n✅ Video sẵn sàng: {output}")
+
+    elif args.file:
+        output = process_video(args.file, hook_text=args.hook, cta_text=args.cta, bg_music=getattr(args, 'bg_music', None))
+        if output:
+            print(f"\n✅ Video sẵn sàng: {output}")
+
+    else:
+        print("❌ Phải chỉ định --url, --file, hoặc --batch")
+
+
+# ============================================================
+# COMMAND: FULL (pipeline đầy đủ)
+# ============================================================
+
+def cmd_full(args):
+    """Pipeline đầy đủ: Tải → Xử lý → TTS → Upload."""
+    print("=" * 60)
+    print("🚀 FULL AFFILIATE PIPELINE")
+    print("=" * 60)
+
+    # Bước 1: Tải/xử lý video
+    if args.url:
+        print("\n📌 BƯỚC 1: Tải video...")
+        raw = download_video(args.url)
+        if not raw:
+            print("❌ Tải video thất bại")
+            return
+        print("\n📌 BƯỚC 2: Xử lý video...")
+        processed = process_video(raw, hook_text=args.hook, cta_text=args.cta, bg_music=getattr(args, 'bg_music', None))
+    elif args.file:
+        print("\n📌 BƯỚC 1-2: Xử lý video local...")
+        processed = process_video(args.file, hook_text=args.hook, cta_text=args.cta, bg_music=getattr(args, 'bg_music', None))
+    else:
+        print("❌ Phải chỉ định --url hoặc --file")
+        return
+
+    if not processed:
+        print("❌ Xử lý video thất bại")
+        return
+
+    # Bước 2.5: Thêm TTS (nếu có script)
+    if args.tts_script:
+        print("\n📌 BƯỚC 3: Tạo TTS voiceover...")
+        os.makedirs("temp", exist_ok=True)
+        tts_script_file = "temp/tts_script_temp.txt"
+        with open(tts_script_file, "w", encoding="utf-8") as f:
+            f.write(args.tts_script)
+
+        tts_audio = "temp/tts_overlay.mp3"
+        tts_srt = "temp/tts_overlay.srt"
+        run_tts(tts_script_file, tts_audio, tts_srt, voice=args.voice)
+
+        # TODO: Ghép TTS audio vào processed video bằng FFmpeg
+        print(f"  ✅ TTS audio: {tts_audio}")
+        print(f"  ⚠️  Ghép TTS vào video sẽ được tích hợp trong bản sau")
+
+    # Bước 3: Tạo caption
+    print("\n📌 BƯỚC 4: Tạo caption...")
+    fmt = auto_select_format()
+    caption_data = build_caption(
+        template_type=fmt,
+        category=args.category,
+        product=args.product or "sản phẩm",
+        price=args.price or "giá tốt",
+        problem=args.hook or "Vấn đề phổ biến",
+        result="Hiệu quả bất ngờ",
+    )
+    print(f"  Format: {fmt}")
+    print(f"  Caption: {caption_data['caption'][:80]}...")
+
+    # Bước 4: Upload
+    nick = args.nick or "default"
+    print(f"\n📌 BƯỚC 5: Upload cho nick [{nick}]...")
+    success = upload_video(
+        video_path=processed,
+        title=caption_data["caption"],
+        tags=caption_data["tags"],
+        nick_name=nick,
+    )
+
+    if success:
+        record_upload(nick, success=True)
+        print(f"\n🎉 PIPELINE HOÀN TẤT!")
+    else:
+        print(f"\n❌ Upload thất bại")
+
+
+# ============================================================
+# COMMAND: NICK (quản lý tài khoản)
+# ============================================================
+
+def cmd_nick(args):
+    """Quản lý tài khoản TikTok."""
+    subcmd = args.nick_cmd
+
+    if subcmd == "list":
+        list_nicks(status_filter=args.status)
+
+    elif subcmd == "add":
+        if not args.name:
+            print("❌ Thiếu tên nick. VD: python main.py nick add nick_01")
+            return
+        add_nick(args.name, username=args.username or "")
+
+    elif subcmd == "remove":
+        if not args.name:
+            print("❌ Thiếu tên nick. VD: python main.py nick remove nick_01")
+            return
+        remove_nick(args.name)
+
+    elif subcmd == "login":
+        nick = args.name or "default"
+        login_tiktok(nick_name=nick)
+
+    elif subcmd == "plan":
+        get_upload_plan()
+
+    else:
+        print("❌ Lệnh nick không hợp lệ. Dùng: list, add, remove, login, plan")
+
+
+# ============================================================
+# ARGUMENT PARSER
+# ============================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="🚀 TikTok Affiliate Automation Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Chế độ hoạt động")
+
+    # --- CREATE (giữ nguyên chức năng cũ) ---
+    p_create = subparsers.add_parser("create", help="Tạo video từ kịch bản text")
+    p_create.add_argument("--script", default="script.txt")
+    p_create.add_argument("--upload", action="store_true")
+    p_create.add_argument("--title", default="")
+    p_create.add_argument("--tags", default="fyp,viral,tiktokvietnam,review,affiliate")
+    p_create.add_argument("--output", default="output/final_video.mp4")
+    p_create.add_argument("--style", type=int, default=1, choices=[1, 2, 3, 4])
+    p_create.add_argument("--position", default="bottom", choices=["center", "bottom"])
+    p_create.add_argument("--bg-dir", default="backgrounds")
+    p_create.add_argument("--bgm-dir", default="audio_bg")
+    p_create.add_argument("--rate", default="+20%")
+    p_create.add_argument("--voice", default="hoaimy")
+    p_create.add_argument("--auto-split", action="store_true")
+    p_create.add_argument("--auto-bg", action="store_true", default=True)
+    p_create.add_argument("--no-auto-bg", action="store_true")
+    p_create.add_argument("--nick", default="default")
+
+    # --- PROCESS (tải + xử lý video) ---
+    p_process = subparsers.add_parser("process", help="Tải + xử lý video từ nguồn ngoài")
+    p_process.add_argument("--url", help="URL video (Douyin, TikTok...)")
+    p_process.add_argument("--file", help="Video local")
+    p_process.add_argument("--batch", help="File CSV danh sách video")
+    p_process.add_argument("--hook", help="Text hook 3 giây đầu")
+    p_process.add_argument("--cta", help="Text CTA 3 giây cuối")
+    p_process.add_argument("--bg-music", help="Đường dẫn file nhạc nền an toàn để thay thế nhạc gốc")
+
+    # --- FULL (pipeline đầy đủ) ---
+    p_full = subparsers.add_parser("full", help="Pipeline đầy đủ: Tải → Xử lý → Upload")
+    p_full.add_argument("--url", help="URL video")
+    p_full.add_argument("--file", help="Video local")
+    p_full.add_argument("--hook", help="Text hook 3 giây đầu")
+    p_full.add_argument("--cta", help="Text CTA 3 giây cuối")
+    p_full.add_argument("--bg-music", help="Đường dẫn file nhạc nền an toàn để thay thế nhạc gốc")
+    p_full.add_argument("--tts-script", help="Nội dung voiceover TTS tiếng Việt")
+    p_full.add_argument("--voice", default="hoaimy")
+    p_full.add_argument("--nick", default="default", help="Tên nick để upload")
+    p_full.add_argument("--category", default="general", help="Ngách: gadget, fashion, beauty, food")
+    p_full.add_argument("--product", default="", help="Tên sản phẩm")
+    p_full.add_argument("--price", default="", help="Giá sản phẩm")
+
+    # --- NICK (quản lý tài khoản) ---
+    p_nick = subparsers.add_parser("nick", help="Quản lý tài khoản TikTok")
+    p_nick.add_argument("nick_cmd", choices=["list", "add", "remove", "login", "plan"])
+    p_nick.add_argument("name", nargs="?", default=None, help="Tên nick")
+    p_nick.add_argument("--username", default="", help="TikTok username")
+    p_nick.add_argument("--status", default=None, help="Lọc theo trạng thái")
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        print("\n💡 Bắt đầu nhanh:")
+        print("  python main.py create --script script.txt          # Tạo video từ kịch bản")
+        print("  python main.py process --url 'https://...'         # Xử lý video từ URL")
+        print("  python main.py full --file video.mp4 --nick test   # Pipeline đầy đủ")
+        print("  python main.py nick list                           # Xem danh sách nick")
+        return
+
+    commands = {
+        "create": cmd_create,
+        "process": cmd_process,
+        "full": cmd_full,
+        "nick": cmd_nick,
+    }
+
+    handler = commands.get(args.command)
+    if handler:
+        handler(args)
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":

@@ -1,8 +1,17 @@
+# Core
 edge-tts
 moviepy==1.0.3
-playwright
 Pillow
 python-dotenv
 requests
 flask
 flask-cors
+
+# Upgrade: Anti-detect browser automation (thay Playwright)
+DrissionPage
+
+# Video processing pipeline (mới thêm)
+yt-dlp
+
+# Scheduling (mới thêm)
+APScheduler

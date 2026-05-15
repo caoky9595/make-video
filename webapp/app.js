@@ -88,6 +88,36 @@ function renderVoiceSelect() {
   };
 }
 
+async function suggestViralIdeas() {
+  const btn = event.currentTarget;
+  const icon = btn.querySelector('.material-symbols-outlined');
+  const originalIcon = icon.textContent;
+  
+  icon.textContent = 'sync';
+  icon.classList.add('animate-spin');
+  btn.disabled = true;
+
+  try {
+    const r = await fetch(`${API}/ideas/generate`);
+    const data = await r.json();
+    if (data.ideas && data.ideas.length > 0) {
+      // Pick a random idea from the suggestions
+      const randomIdea = data.ideas[Math.floor(Math.random() * data.ideas.length)];
+      const input = document.getElementById('ideaInput');
+      input.value = randomIdea;
+      input.classList.add('text-purple-300');
+      setTimeout(() => input.classList.remove('text-purple-300'), 1000);
+      showToast('🪄 AI đã tìm thấy một chủ đề "ngon" cho bạn!');
+    }
+  } catch (e) {
+    showToast('❌ Không thể kết nối với bộ não AI.');
+  } finally {
+    icon.textContent = originalIcon;
+    icon.classList.remove('animate-spin');
+    btn.disabled = false;
+  }
+}
+
 async function previewVoice(voiceId) {
   showToast('Đang tạo audio preview...');
   try {
@@ -141,12 +171,15 @@ async function generateScript() {
   if (!idea) { showToast('❌ Vui lòng nhập ý tưởng!'); return; }
   
   const btn = document.getElementById('btnGenerate');
-  if (btn) btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-sm">sync</span> Đang tạo...';
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-[16px]">sync</span> ĐANG TẠO...';
+  
+  const scriptMode = document.getElementById('scriptMode')?.value || 'affiliate';
   
   try {
     const r = await fetch(`${API}/script/generate`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ idea })
+      body: JSON.stringify({ idea, mode: scriptMode })
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
@@ -158,7 +191,7 @@ async function generateScript() {
   } catch(e) { 
     showToast('❌ Lỗi: ' + e.message); 
   } finally {
-    if (btn) btn.innerHTML = '<span class="material-symbols-outlined text-sm">auto_awesome</span> Tạo bằng AI';
+    if (btn) btn.innerHTML = originalHtml;
   }
 }
 
@@ -388,13 +421,38 @@ async function loadStats() {
   try {
     const r = await fetch(`${API}/stats`);
     const d = await r.json();
-    const el = (id) => document.getElementById(id);
-    if (el('statVideos')) el('statVideos').textContent = d.videos_created;
-    if (el('statSize')) el('statSize').textContent = d.total_size_mb + ' MB';
-    if (el('fptUsed')) el('fptUsed').textContent = `${d.fpt_chars_used} / ${d.fpt_chars_limit.toLocaleString()} ký tự`;
-    if (el('fptBar')) el('fptBar').style.width = (d.fpt_chars_used/d.fpt_chars_limit*100) + '%';
-    if (el('fptPct')) el('fptPct').textContent = (d.fpt_chars_used/d.fpt_chars_limit*100).toFixed(1) + '%';
-  } catch(e) {}
+    
+    // Core stats
+    const elNicks = document.getElementById('stat-nicks');
+    const elVideos = document.getElementById('stat-videos');
+    const elViews = document.getElementById('stat-views');
+    const elIncome = document.getElementById('stat-income');
+    const elSize = document.getElementById('statSize');
+
+    if (elNicks) elNicks.innerText = d.total_nicks || 0;
+    if (elVideos) elVideos.innerText = d.total_videos || 0;
+    if (elViews) elViews.innerText = (d.total_views || 0) + 'K';
+    if (elIncome) elIncome.innerText = '$' + (d.total_income || 0);
+    if (elSize) elSize.innerHTML = `${d.total_size_mb || '0.0'}<span class="text-lg text-muted/40 ml-1">MB</span>`;
+
+    // AI Quota
+    const aiPct = document.getElementById('aiPct');
+    const aiBar = document.getElementById('aiBar');
+    const aiText = document.getElementById('aiUsedText');
+    const aiMarker = document.getElementById('aiPctMarker');
+    
+    if (aiPct && aiBar && aiText) {
+      const pct = Math.round((d.ai_used / d.ai_limit) * 100) || 0;
+      aiPct.innerText = pct + '%';
+      aiBar.style.width = pct + '%';
+      aiText.innerText = `${d.ai_used} / ${d.ai_limit} Requests`;
+      if (aiMarker) aiMarker.style.left = pct + '%';
+    }
+
+    const fpt = document.getElementById('fptUsed');
+    if (fpt) fpt.innerText = `FPT: ${d.fpt_used || 0} / ${d.fpt_limit || 0} CHARS`;
+
+  } catch(e) { console.error("Stats Error:", e); }
 }
 
 async function loadOutputs() {
@@ -899,7 +957,395 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const aiLimitInput = document.getElementById('cfgAiLimit');
+  if (aiLimitInput) {
+    aiLimitInput.addEventListener('change', async () => {
+      await fetch(`${API}/quota/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: aiLimitInput.value })
+      });
+      loadStats();
+    });
+  }
+
   // Init first resource tab
   const firstTab = document.querySelector('.resource-tab');
   if (firstTab) firstTab.click();
 });
+
+// ============================================================
+// ACCOUNT MANAGER & AUTO UPLOADER
+// ============================================================
+
+async function loadNicks() {
+  try {
+    const r = await fetch(`${API}/nicks`);
+    const nicks = await r.json();
+    const tbody = document.getElementById('nickTableBody');
+    if(!tbody) return;
+    
+    if (Object.keys(nicks).length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="py-12 text-center text-muted text-xs uppercase tracking-widest font-bold">Chưa có nick nào. Thêm nick để bắt đầu.</td></tr>';
+      return;
+    }
+    
+    tbody.innerHTML = '';
+    for (const [name, data] of Object.entries(nicks)) {
+      const statusIcon = {"new":"🆕","warmup":"🔥","active":"✅","paused":"⏸️","banned":"❌"}[data.status] || "❓";
+      const statusColor = {"new":"blue","warmup":"orange","active":"green","paused":"gray","banned":"red"}[data.status] || "purple";
+      
+      tbody.innerHTML += `
+        <tr class="hover:bg-white/[0.02] transition-colors group">
+          <td class="px-8 py-5">
+            <div class="flex items-center gap-4">
+              <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-500/20 to-blue-500/20 border border-white/5 flex items-center justify-center font-black text-white/80">
+                ${name.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <p class="text-xs font-black text-white tracking-tight">${name}</p>
+                <p class="text-[10px] text-muted/60 font-medium">${data.username || '@username'}</p>
+              </div>
+            </div>
+          </td>
+          <td class="px-8 py-5">
+            <div class="space-y-1">
+              <p class="text-[10px] font-bold text-white/80 flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-[12px] text-blue-400">cloud</span>
+                ${data.proxy || 'No Proxy (Direct)'}
+              </p>
+              <p class="text-[9px] text-muted uppercase tracking-tighter">Chromium Engine v145.x</p>
+            </div>
+          </td>
+          <td class="px-8 py-5">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-${statusColor}-500/10 text-${statusColor}-400 text-[10px] font-black uppercase tracking-widest border border-${statusColor}-500/20">
+              <span class="w-1.5 h-1.5 rounded-full bg-${statusColor}-500 shadow-[0_0_8px_rgba(var(--${statusColor}-rgb),0.5)]"></span>
+              ${data.status}
+            </span>
+          </td>
+          <td class="px-8 py-5 text-center">
+            <div class="flex flex-col items-center gap-1">
+              <p class="text-xs font-black text-white">${data.videos_today} <span class="text-muted/40 font-medium">/ ${data.total_videos}</span></p>
+              <div class="w-16 h-1 bg-white/5 rounded-full overflow-hidden">
+                <div class="h-full bg-green-500" style="width: ${Math.min(100, (data.videos_today/5)*100)}%"></div>
+              </div>
+            </div>
+          </td>
+          <td class="px-8 py-5 text-right">
+            <div class="flex gap-2 justify-end opacity-40 group-hover:opacity-100 transition-opacity">
+              <button onclick="loginNick('${name}')" class="h-9 px-4 rounded-xl bg-purple-500 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-purple-500/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2">
+                <span class="material-symbols-outlined text-sm">rocket_launch</span> MỞ BROWSER
+              </button>
+              <button onclick="deleteNick('${name}')" class="h-9 w-9 flex items-center justify-center rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all">
+                <span class="material-symbols-outlined text-sm">delete</span>
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function loginNick(name) {
+  showToast(`🚀 Đang mở trình duyệt cho ${name}...`);
+  try {
+    await fetch(`${API}/nicks/login`, {
+      method: 'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name})
+    });
+  } catch(e) { showToast('❌ Không thể mở trình duyệt'); }
+}
+
+async function submitAddNick() {
+  const name = document.getElementById('addNickName').value.trim();
+  const username = document.getElementById('addNickUser').value.trim();
+  if(!name) { alert("Vui lòng nhập tên nick"); return; }
+  
+  try {
+    const r = await fetch(`${API}/nicks/add`, {
+      method: 'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name, username})
+    });
+    if(r.ok) {
+      document.getElementById('addNickModal').classList.add('hidden');
+      document.getElementById('addNickName').value = '';
+      document.getElementById('addNickUser').value = '';
+      showToast('✅ Đã thêm nick');
+      loadNicks();
+    }
+  } catch(e) { showToast('❌ Thêm nick thất bại'); }
+}
+
+async function deleteNick(name) {
+  if(!confirm(`Xóa nick ${name}? (Không xóa profile Chrome)`)) return;
+  try {
+    const r = await fetch(`${API}/nicks/remove`, {
+      method: 'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name})
+    });
+    if(r.ok) {
+      showToast('🗑️ Đã xóa nick');
+      loadNicks();
+    }
+  } catch(e) {}
+}
+
+async function loadPlan() {
+  try {
+    const r = await fetch(`${API}/nicks`);
+    const nicks = await r.json();
+    const planList = document.getElementById('planList');
+    if(!planList) return;
+    
+    planList.innerHTML = '';
+    const today = new Date().toISOString().split('T')[0];
+    let count = 0;
+    for (const [name, data] of Object.entries(nicks)) {
+      if(data.status === 'banned' || data.status === 'paused') continue;
+      
+      const created = new Date(data.created_at);
+      const age_days = (new Date() - created) / (1000*60*60*24);
+      let max_videos = age_days < 7 ? 2 : (age_days < 14 ? 3 : 5);
+      
+      let videos_today = data.videos_today_date === today ? data.videos_today : 0;
+      let remaining = Math.max(0, max_videos - videos_today);
+      if(remaining > 0) count++;
+      
+      planList.innerHTML += `
+        <div class="bg-black/30 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
+          <div>
+            <p class="font-bold text-xs text-white">${name}</p>
+            <p class="text-[10px] text-muted">Status: ${data.status} | Đã đăng: ${videos_today}/${max_videos}</p>
+          </div>
+          <div class="w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${remaining > 0 ? 'bg-purple-500/20 text-purple-400' : 'bg-green-500/20 text-green-400'}">
+            ${remaining}
+          </div>
+        </div>
+      `;
+    }
+    if(count === 0) {
+      planList.innerHTML = '<p class="text-xs text-muted/50 text-center py-4">Không còn tác vụ trống hôm nay.</p>';
+    }
+  } catch(e) {}
+}
+
+async function loadFacVideos() {
+  try {
+    const r = await fetch(`${API}/affiliate/videos`);
+    const vids = await r.json();
+    const el = document.getElementById('facList');
+    if(!el) return;
+    if(!vids.length) {
+      el.innerHTML = '<div class="col-span-full py-16 flex flex-col items-center justify-center text-muted/30"><span class="material-symbols-outlined text-5xl mb-4">inventory_2</span><p class="font-bold uppercase tracking-widest text-xs">Chưa có video xử lý</p></div>';
+      return;
+    }
+    el.innerHTML = '';
+    vids.forEach(v => {
+      el.innerHTML += `
+        <div class="aspect-[9/16] bg-black/40 rounded-2xl border border-white/5 p-4 flex flex-col justify-end relative overflow-hidden group">
+          <div class="absolute inset-0 bg-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div class="relative z-10">
+            <p class="text-xs font-bold text-white truncate shadow-black drop-shadow-md">${v.name}</p>
+            <p class="text-[10px] text-blue-300 font-medium">${v.size_mb} MB • ${v.created}</p>
+          </div>
+        </div>
+      `;
+    });
+  } catch(e){}
+}
+
+async function loadFacVideosForUpload() {
+  try {
+    const r = await fetch(`${API}/affiliate/videos`);
+    const vids = await r.json();
+    const select = document.getElementById('upVideo');
+    if(!select) return;
+    select.innerHTML = '<option value="">-- Chọn video --</option>';
+    vids.forEach(v => {
+      select.innerHTML += `<option value="${v.path}">${v.name} (${v.size_mb}MB)</option>`;
+    });
+  } catch(e){}
+}
+
+async function loadNicksForUpload() {
+  try {
+    const r = await fetch(`${API}/nicks`);
+    const nicks = await r.json();
+    const select = document.getElementById('upNick');
+    if(!select) return;
+    select.innerHTML = '<option value="">-- Chọn nick --</option>';
+    for (const [name, data] of Object.entries(nicks)) {
+      if(data.status !== 'banned') {
+         select.innerHTML += `<option value="${name}">${name} (${data.status})</option>`;
+      }
+    }
+  } catch(e){}
+}
+
+async function startFactoryProcess() {
+  const url = document.getElementById('facUrl').value.trim();
+  const hook = document.getElementById('facHook').value.trim();
+  const cta = document.getElementById('facCta').value.trim();
+  
+  if(!url) { alert("Nhập link video Douyin/TikTok!"); return; }
+  
+  const statusEl = document.getElementById('facStatus');
+  statusEl.innerText = "Đang gửi yêu cầu...";
+  try {
+    const r = await fetch(`${API}/affiliate/process`, {
+      method: 'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({url, hook, cta, bg_music: selectedMusicFile || undefined})
+    });
+    const d = await r.json();
+    if(d.error) {
+      statusEl.innerText = "Lỗi: " + d.error;
+    } else {
+      statusEl.innerText = "Đã vào hàng đợi...";
+    }
+  } catch(e) { statusEl.innerText = "Lỗi kết nối!"; }
+}
+
+let uploadQueue = [];
+
+function addToQueue() {
+  const video_path = document.getElementById('upVideo').value;
+  const nick_name = document.getElementById('upNick').value;
+  const product_id = document.getElementById('upProductId').value.trim();
+  const title = document.getElementById('upTitle').value;
+  
+  if(!video_path || !nick_name) { alert("Vui lòng chọn Video và Nick đăng!"); return; }
+  
+  // Extract file name
+  const videoName = video_path.split(/[\\/]/).pop();
+  
+  // Parse hashtags
+  const tags = title.match(/#[^\s#]+/g) ? title.match(/#[^\s#]+/g).map(t => t.replace('#', '')) : ["fyp", "viral"];
+  
+  uploadQueue.push({
+    video_path,
+    nick_name,
+    product_id,
+    title,
+    tags
+  });
+  
+  renderQueue();
+  
+  // Reset fields loosely
+  document.getElementById('upProductId').value = '';
+}
+
+function renderQueue() {
+  const listEl = document.getElementById('queueList');
+  const countEl = document.getElementById('queueCount');
+  countEl.innerText = uploadQueue.length;
+  
+  if (uploadQueue.length === 0) {
+    listEl.innerHTML = '<div class="py-8 text-center text-muted text-[10px] uppercase tracking-widest font-bold">Queue trống</div>';
+    return;
+  }
+  
+  listEl.innerHTML = '';
+  uploadQueue.forEach((job, idx) => {
+    const videoName = job.video_path.split(/[\\/]/).pop();
+    listEl.innerHTML += `
+      <div class="p-3 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between group">
+        <div>
+          <div class="text-[11px] font-bold text-white mb-0.5">Nick: <span class="text-green-400">${job.nick_name}</span></div>
+          <div class="text-[10px] text-muted truncate max-w-[200px]">${videoName}</div>
+          ${job.product_id ? `<div class="text-[9px] text-yellow-400 font-bold mt-1">🛒 SP: ${job.product_id}</div>` : ''}
+        </div>
+        <button onclick="removeFromQueue(${idx})" class="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-opacity">
+          <span class="material-symbols-outlined text-[16px]">delete</span>
+        </button>
+      </div>
+    `;
+  });
+}
+
+function removeFromQueue(idx) {
+  uploadQueue.splice(idx, 1);
+  renderQueue();
+}
+
+async function startUploadQueue() {
+  if(uploadQueue.length === 0) { alert("Hàng đợi trống!"); return; }
+  
+  const statusEl = document.getElementById('upStatus');
+  statusEl.classList.remove('hidden');
+  statusEl.innerText = "Đang gửi hàng đợi lên server...";
+  
+  try {
+    const r = await fetch(`${API}/affiliate/upload_queue`, {
+      method: 'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ jobs: uploadQueue })
+    });
+    const d = await r.json();
+    if(d.error) {
+      statusEl.innerText = "Lỗi: " + d.error;
+    } else {
+      statusEl.innerText = "Hàng đợi đang chạy nền...";
+      // Clear local queue since it's now on server
+      uploadQueue = [];
+      renderQueue();
+    }
+  } catch(e) { statusEl.innerText = "Lỗi kết nối!"; }
+}
+
+async function scheduleQueue() {
+  if(uploadQueue.length === 0) { alert("Hàng đợi trống!"); return; }
+  
+  const statusEl = document.getElementById('upStatus');
+  statusEl.classList.remove('hidden');
+  statusEl.innerText = "Đang lên lịch...";
+  
+  try {
+    const r = await fetch(`${API}/affiliate/schedule`, {
+      method: 'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ jobs: uploadQueue })
+    });
+    const d = await r.json();
+    if(d.error) {
+      statusEl.innerText = "Lỗi: " + d.error;
+    } else {
+      statusEl.innerText = d.message;
+      // Clear local queue
+      uploadQueue = [];
+      renderQueue();
+      setTimeout(()=> { statusEl.classList.add('hidden'); }, 5000);
+    }
+  } catch(e) { statusEl.innerText = "Lỗi kết nối!"; }
+}
+
+// Poll affiliate status
+setInterval(async () => {
+  try {
+    const r = await fetch(`${API}/affiliate/status`);
+    const s = await r.json();
+    if(s.running) {
+      if(s.task === 'process') {
+         const el = document.getElementById('facStatus');
+         if(el) el.innerText = s.message;
+      } else if (s.task === 'upload' || s.task === 'upload_queue') {
+         const el = document.getElementById('upStatus');
+         if(el) { el.classList.remove('hidden'); el.innerText = s.message; }
+      }
+    } else {
+       // Completed or error
+       if(s.task === 'process') {
+          const el = document.getElementById('facStatus');
+          if(el && el.innerText !== s.message) {
+             el.innerText = s.message;
+             loadFacVideos();
+          }
+       } else if(s.task === 'upload' || s.task === 'upload_queue') {
+          const el = document.getElementById('upStatus');
+          if(el && el.innerText !== s.message && !el.classList.contains('hidden')) {
+             el.innerText = s.message;
+             if(s.message.includes('✅')) setTimeout(()=> { el.classList.add('hidden'); }, 10000);
+          }
+       }
+    }
+  } catch(e) {}
+}, 2000);

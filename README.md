@@ -1,107 +1,113 @@
-# 🎬 VideoMaker Pro - AI Video Creator
+# 🎬 VideoMaker Pro - AI Video Creator & Affiliate Automation
+> **The ultimate command center for TikTok Creators and Affiliate Marketers.**
 
-Hệ thống tạo video TikTok tự động với giao diện web premium. Tích hợp AI thông minh để biến ý tưởng thành video thành phẩm chỉ trong vài phút.
+VideoMaker Pro is a high-performance, automated video production suite integrated with a premium web dashboard. It combines cutting-edge AI (Gemini 1.5 Pro) for script generation with a robust automation pipeline for multi-account management, stealth browsing, and scheduled content distribution.
 
-### ✨ Tính năng mới (v2.0)
-*   **Giao diện 3 cột chuyên nghiệp:** Trải nghiệm Studio thực thụ với Script - Settings - Preview trên cùng một màn hình.
-*   **Thư viện Video (Dashboard):** Quản lý video dưới dạng lưới (Grid) với Thumbnail trực quan.
-*   **Hệ thống Quản lý Output:** Hỗ trợ xem trước video ngay trên web, chọn nhiều file, xóa hàng loạt.
-*   **AI Script Generator:** Tích hợp Gemini Flash để tạo kịch bản từ ý tưởng chỉ trong 5 giây.
-*   **Studio Visual Mode:** Upload ảnh riêng và chọn 1 trong 3 chế độ nền: Pexels mặc định, mix Pexels + ảnh upload, hoặc chỉ ảnh upload.
-*   **Music Library trong Studio:** Upload nhạc nhiều định dạng, chọn file nhạc nền và chọn mốc giây bắt đầu để cắt đoạn chèn vào video.
-*   **BGM Volume Control:** Tinh chỉnh âm lượng nhạc nền trực tiếp trong Studio trước khi render.
-*   **AI Local Music Picker:** AI tự chọn nhạc phù hợp từ thư viện local `audio_bg/` (không cần gọi thư viện online).
-*   **Persistence:** Ghi nhớ Tab làm việc ngay cả khi tải lại trang (F5).
-*   **Unique Output:** Tự động đặt tên video theo thời gian, không lo ghi đè.
+---
 
-## 🚀 Khởi chạy Web App
+## ✨ Key Features
 
+### 🎨 Premium Meme Studio (Creation Mode)
+- **Triple-Column Workspace:** Script Editor, Asset Management, and Live Preview all on one screen.
+- **AI Brain (Gemini 1.5 Pro):** Generate viral-ready scripts from simple ideas in seconds.
+- **Dynamic Asset Library:** Seamlessly mix local uploads with Pexels stock footage.
+- **Advanced Audio Engine:** Support for background music mixing, voice-over (TTS) synchronization, and volume normalization.
+- **Video Library:** Premium grid view to manage, preview, and batch-delete your creations.
+
+### 🛡️ Stealth Browser & Affiliate Pipeline (Automation Mode)
+- **CloakBrowser Integration:** Native support for CloakBrowser binaries to bypass TikTok's bot detection and automation checks.
+- **Multi-Account Management:** Isolated Chrome profiles with per-account proxy support and fingerprint spoofing.
+- **Content Factory:** Automatic "Freshness" processing—re-render existing videos with new music/TTS to evade copyright strikes.
+- **Auto Uploader & Scheduler:**
+    - **Intelligent Queue:** Multi-threaded uploading with automatic retries and detailed logs.
+    - **Golden Hour Scheduler:** Set your uploads for peak engagement times (11h-13h, 18h-21h).
+    - **Showcase Integration:** Automatic product tagging via Product IDs.
+- **Health Check & Account Warming:** Automated browsing scripts to build account trust.
+
+---
+
+## 🚀 Getting Started
+
+### 1. Installation
 ```bash
-# Kích hoạt môi trường
-source .venv/bin/activate
+# Clone the repository
+git clone https://github.com/your-repo/videomaker-pro.git
+cd videomaker-pro
 
-# Chạy web server
-python app.py
-
-# → Mở http://localhost:5000
-```
-
-## 💻 Chạy CLI (không cần web)
-
-```bash
-python main.py                          # Tạo video từ script.txt
-python main.py --voice banmai           # Dùng giọng FPT.AI Ban Mai
-python main.py --upload                 # Tạo + upload TikTok
-python main.py --list-voices            # Xem danh sách giọng đọc
-python main.py --auto-split             # AI cắt phần tự động
-```
-
-## 🎙️ Giọng đọc hỗ trợ (9 giọng)
-
-| ID | Tên | Giới tính | Vùng miền | Engine |
-|---|---|---|---|---|
-| `hoaimy` | Hoài My | Nữ | Bắc | Edge-TTS (Free) |
-| `namminh` | Nam Minh | Nam | Bắc | Edge-TTS (Free) |
-| `banmai` | Ban Mai | Nữ | Bắc | FPT.AI |
-| `thuminh` | Thu Minh | Nữ | Bắc | FPT.AI |
-| `leminh` | Lê Minh | Nam | Bắc | FPT.AI |
-| `myan` | Mỹ An | Nữ | Trung | FPT.AI |
-| `giahuy` | Gia Huy | Nam | Trung | FPT.AI |
-| `lannhi` | Lan Nhi | Nữ | Nam | FPT.AI |
-| `linhsan` | Linh San | Nữ | Nam | FPT.AI |
-
-## 🌐 API Endpoints
-
-| Method | Endpoint | Mô tả |
-|---|---|---|
-| GET | `/api/voices` | Danh sách giọng đọc |
-| GET | `/api/stats` | Thống kê tổng quan |
-| GET | `/api/script/load` | Đọc kịch bản |
-| POST | `/api/script/save` | Lưu kịch bản |
-| POST | `/api/tts/preview` | Preview giọng đọc |
-| POST | `/api/pipeline/start` | Bắt đầu tạo video |
-| GET | `/api/pipeline/status` | Trạng thái pipeline |
-| GET | `/api/backgrounds` | Video nền có sẵn |
-| GET | `/api/images` | Danh sách ảnh đã upload |
-| POST | `/api/images/upload` | Upload một hoặc nhiều ảnh |
-| POST | `/api/images/delete` | Xóa ảnh đã upload |
-| GET | `/api/music` | Danh sách thư viện nhạc |
-| POST | `/api/music/upload` | Upload một hoặc nhiều file nhạc |
-| POST | `/api/music/delete` | Xóa file nhạc đã upload |
-| GET | `/api/bgm` | Nhạc nền có sẵn |
-| GET | `/api/outputs` | Danh sách video thành phẩm |
-| POST | `/api/outputs/delete` | Xóa một hoặc nhiều video |
-| POST | `/api/outputs/delete_all` | Dọn dẹp sạch thư viện video |
-
-## 📁 Cấu trúc dự án
-
-```
-play/
-├── app.py              # Flask web server + API
-├── main.py             # CLI pipeline
-├── tts.py              # Text-to-Speech (Edge + FPT.AI)
-├── video_maker.py      # Video renderer
-├── bg_finder.py        # Tìm video nền Pexels
-├── uploader.py         # Upload TikTok
-├── ai_splitter.py      # AI cắt phần (Gemini)
-├── webapp/             # Giao diện web SPA
-│   ├── index.html      # Layout chính (Tailwind CSS + Glassmorphism)
-│   └── app.js          # Logic điều hướng, API & UI
-├── script.txt          # Kịch bản mẫu
-├── backgrounds/        # Video nền
-├── audio_bg/           # Nhạc nền
-├── output/             # Video đã xuất
-└── .env                # API keys
-```
-
-## ⚙️ Cài đặt
-
-```bash
+# Set up virtual environment
 python -m venv .venv
 source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
-cp .env.example .env  # Thêm API keys
+
+# Configure environment variables
+cp .env.example .env  # Add your GEMINI_API_KEY and FPT_AI_API_KEY
 ```
 
-Studio hỗ trợ nhập thời điểm bắt đầu nhạc theo `mm:ss` (ví dụ `01:30`) hoặc `hh:mm:ss`.
+### 2. Launch the Web Dashboard
+```bash
+# Start the main application
+python app.py
+
+# Optional: Start the Scheduler for Golden Hour uploads
+python scheduler.py
+
+# → Open http://localhost:5000 in your browser
+```
+
+---
+
+## 🎙️ Supported AI Voices (Premium Engines)
+
+| Engine | Gender | Accent | Highlights |
+|---|---|---|---|
+| **Edge-TTS** | Male/Female | North | High-quality, Free |
+| **FPT.AI** | Male/Female | North/Central/South | Pro-grade, Natural |
+
+---
+
+## 🛠️ CLI Power Tools
+For advanced users, VideoMaker Pro offers a robust CLI interface:
+
+```bash
+# Manage Accounts
+python main.py nick login test_nick     # Initialize a new stealth session
+python main.py nick list                # View status of all satellite accounts
+
+# Process Content
+python main.py process --url 'https://...'      # Download & Clean a video
+python main.py process --file v.mp4 --bg-music music.mp3 # Manual re-render
+
+# Account Maintenance
+python health_check.py                  # Run automated warm-up routines
+```
+
+---
+
+## 📁 Project Architecture
+```
+play/
+├── app.py              # Main Web Server & API Gateway
+├── main.py             # CLI Controller for Automation
+├── cloakbrowser.py     # CloakBrowser detection & initialization module
+├── tts.py              # Multi-engine Text-to-Speech logic
+├── video_maker.py      # Core Studio rendering engine (FFmpeg)
+├── uploader.py         # Stealth Automation via CloakBrowser + DrissionPage
+├── scheduler.py        # Background Golden Hour daemon
+├── webapp/             # Premium SPA (HTML5, Vanilla JS, TailwindCSS)
+├── profiles/           # Isolated stealth browser session data
+├── data/               # Persistent storage for accounts and queues
+└── logs/               # Operation logs and upload history
+```
+
+---
+
+## ⚠️ Important Notes
+- **CloakBrowser:** Ensure CloakBrowser is installed in your Applications folder for maximum stealth. The system will fall back to standard Chrome if not found.
+- **Automation Safety:** The system includes a **Random Delay** mechanism and human-like interaction patterns. Do not disable these if you want to keep your accounts safe.
+- **Monitoring:** Check `logs/upload_history.log` for detailed success/failure reports of your automated uploads.
+
+---
+*Built with ❤️ for the next generation of Content Creators.*
 
