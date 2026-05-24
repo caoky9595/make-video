@@ -23,7 +23,15 @@ import asyncio
 
 load_dotenv()
 
-app = Flask(__name__, static_folder="webapp", template_folder="webapp")
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from core.data.models import AudioConfig, SubtitleConfig, RenderConfig, VideoJobPayload
+from core.data.jobs_db import init_db, create_job, update_job_status, get_job, get_latest_job
+
+init_db()
+executor = ThreadPoolExecutor(max_workers=2)
+
+app = Flask(__name__, static_folder="frontend/dist", static_url_path="")
 CORS(app)
 
 UPLOADED_IMAGE_DIR = "uploaded_images"
@@ -51,7 +59,7 @@ def get_ai_usage():
             if "limit" not in data:
                 data["limit"] = default_limit
             return data
-    except:
+    except Exception:
         return {"date": today, "used": 0, "limit": default_limit}
 
 def update_ai_limit(limit):
@@ -80,13 +88,8 @@ pipeline_status = {
     "error": None,
 }
 
-affiliate_status = {
-    "running": False,
-    "task": "",
-    "message": "",
-    "progress": 0,
-    "error": None
-}
+jobs_status = {}
+import uuid
 
 
 # ============================================================
@@ -95,12 +98,8 @@ affiliate_status = {
 
 @app.route("/")
 def index():
-    return send_from_directory("webapp", "index.html")
-
-
-@app.route("/webapp/<path:filename>")
-def serve_static(filename):
-    return send_from_directory("webapp", filename)
+    """Index."""
+    return send_from_directory("frontend/dist", "index.html")
 
 
 # ============================================================
@@ -182,7 +181,7 @@ def _parse_music_volume(value, default=0.22):
 @app.route("/api/voices", methods=["GET"])
 def api_voices():
     """Trả về danh sách tất cả giọng đọc."""
-    from tts import EDGE_VOICES, FPT_VOICES
+    from core.engines.tts import EDGE_VOICES, FPT_VOICES
     voices = []
     for key, voice_id in EDGE_VOICES.items():
         gender = "Nữ" if "HoaiMy" in voice_id else "Nam"
@@ -209,6 +208,17 @@ def api_voices():
     return jsonify(voices)
 
 
+@app.route("/api/tiktok/login", methods=["POST"])
+def api_tiktok_login():
+    """Tự động mở trình duyệt lấy sessionid từ TikTok login."""
+    from core.automation.tiktok_login import run_tiktok_login_automation
+    success, result = run_tiktok_login_automation()
+    if success:
+        return jsonify({"success": True, "session_id": result})
+    else:
+        return jsonify({"success": False, "error": result}), 400
+
+
 @app.route("/api/tts/preview", methods=["POST"])
 def api_tts_preview():
     """Tạo audio preview cho một đoạn text ngắn."""
@@ -226,7 +236,7 @@ def api_tts_preview():
         f.write(text)
 
     try:
-        from tts import run_tts
+        from core.engines.tts import run_tts
         run_tts(preview_script, preview_path, f"temp/preview_{voice}.srt", rate=rate, voice=voice)
         return send_file(preview_path, mimetype="audio/mpeg")
     except Exception as e:
@@ -251,9 +261,9 @@ def api_script_save():
 def api_script_generate():
     """Tạo kịch bản bằng AI Gemini từ ý tưởng."""
     data = request.json
-    idea = data.get("idea", "")
+    idea = data.get("idea", "").strip()
     if not idea:
-        return jsonify({"error": "Vui lòng nhập ý tưởng!"}), 400
+        idea = "Một sự thật tâm lý học cực kỳ bất ngờ mà 99% mọi người không biết (Random)"
         
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -544,7 +554,7 @@ def api_outputs_delete():
                 os.remove(cover_path)
             deleted.append(name)
         except Exception as e:
-            print(f"Error deleting {name}: {e}")
+            logger.info(f"Error deleting {name}: {e}")
 
     return jsonify({"success": True, "deleted": deleted})
 
@@ -562,17 +572,137 @@ def api_outputs_delete_all():
         return jsonify({"error": str(e)}), 500
 
 
+def run_pipeline(
+    job_id: str,
+    script_file: str,
+    visual_mode: str,
+    video_mode: str,
+    uploaded_images: list,
+    music_mode: str,
+    audio_cfg: AudioConfig,
+    sub_cfg: SubtitleConfig,
+    render_cfg: RenderConfig,
+    output_file: str
+):
+    """Tiến trình tạo video chạy nền."""
+    update_job_status(job_id, "processing", 10, "Đang tạo giọng đọc...")
+    
+    try:
+        # Nếu script_file chứa nội dung kịch bản (không phải tên file)
+        if len(script_file) > 50 or not script_file.endswith('.txt'):
+            script_text = script_file
+            with open("temp/script.txt", "w", encoding="utf-8") as f:
+                f.write(script_text)
+            script_path = "temp/script.txt"
+        else:
+            script_path = script_file
+            if os.path.exists(script_path):
+                with open(script_path, "r", encoding="utf-8") as f:
+                    script_text = f.read().strip()
+            else:
+                script_text = ""
+
+        # Bước 1: TTS
+        from core.engines.tts import run_tts
+        audio_path = "temp/audio.mp3"
+        srt_path = "temp/subtitles.srt"
+        os.makedirs("temp", exist_ok=True)
+        os.makedirs("output", exist_ok=True)
+
+        run_tts(script_path, audio_path, srt_path, rate=audio_cfg.rate, voice=audio_cfg.voice)
+        update_job_status(job_id, "processing", 30, "Đang chuẩn bị video nền...")
+
+        # Bước 2: Chuẩn bị tài nguyên hình ảnh/video bằng AI Visual Engine
+        bg_dir = "backgrounds"
+        image_dir = UPLOADED_IMAGE_DIR
+        os.makedirs(bg_dir, exist_ok=True)
+        os.makedirs(image_dir, exist_ok=True)
+
+        # Nâng cấp: Xóa tài nguyên cũ để đảm bảo video luôn mới
+        if os.path.exists(bg_dir):
+            for f in os.listdir(bg_dir):
+                if f.startswith("ai_image_") or f.startswith("pexels_") or f.startswith("pixabay_"):
+                    try: os.remove(os.path.join(bg_dir, f))
+                    except Exception: pass
+
+        from core.engines.bg_finder import find_and_download_background
+        update_job_status(job_id, "processing", 30, "Đang tự vẽ bối cảnh bằng AI...")
+        new_assets = find_and_download_background(script_text, output_dir=bg_dir)
+        
+        # Chỉ lấy những file vừa tải/vẽ xong
+        bg_videos = [os.path.basename(f) for f in new_assets]
+        downloaded_bg_assets = new_assets
+        studio_images = [f for f in os.listdir(image_dir) if f.lower().endswith(IMAGE_EXTENSIONS)]
+
+        if visual_mode == "uploaded" and not studio_images:
+            raise FileNotFoundError("Bạn đã chọn 'Chỉ dùng ảnh upload' nhưng chưa có ảnh nào.")
+
+        if visual_mode == "mix" and not (bg_videos or studio_images):
+            raise FileNotFoundError("Không tìm thấy ảnh upload hoặc video Pexels/background để render.")
+
+        update_job_status(job_id, "processing", 50, "Đang render video...")
+
+        # Bước 3: Render
+        from core.engines.video_maker import make_video
+        bgm_dir = MUSIC_DIR
+        os.makedirs(bgm_dir, exist_ok=True)
+        # Dọn dẹp các nhạc nền tải tự động cũ (có tiền tố auto_)
+        for f in os.listdir(bgm_dir):
+            if f.startswith("auto_"):
+                try: os.remove(os.path.join(bgm_dir, f))
+                except Exception: pass
+        bgm_files = [f for f in os.listdir(bgm_dir) if f.lower().endswith(MUSIC_EXTENSIONS)]
+        bgm_path = None
+
+        if music_mode == "manual":
+            if audio_cfg.bgm_path:
+                requested_path = os.path.join(bgm_dir, audio_cfg.bgm_path)
+                if os.path.exists(requested_path):
+                    bgm_path = requested_path
+            if bgm_path is None and bgm_files:
+                bgm_path = os.path.join(bgm_dir, random.choice(bgm_files))
+
+        elif music_mode == "ai_local":
+            from core.engines.music_finder import pick_local_music_for_script
+            bgm_path = pick_local_music_for_script(script_text, bgm_dir)
+            if bgm_path is None and bgm_files:
+                bgm_path = os.path.join(bgm_dir, random.choice(bgm_files))
+
+        if bgm_path:
+            update_job_status(job_id, "processing", 50, f"Đang render video... (BGM: {os.path.basename(bgm_path)})")
+        else:
+            update_job_status(job_id, "processing", 50, "Đang render video... (không có BGM)")
+
+        final_video = make_video(
+            audio_path=audio_path,
+            srt_path=srt_path,
+            bg_dir=bg_dir,
+            output_path=output_file,
+            style=sub_cfg.style,
+            position=sub_cfg.position,
+            bgm_path=bgm_path,
+            bgm_start_sec=audio_cfg.bgm_start_sec,
+            bgm_volume=audio_cfg.bgm_volume,
+            image_dir=image_dir,
+            visual_mode=visual_mode,
+            uploaded_images=uploaded_images if not downloaded_bg_assets else downloaded_bg_assets,
+            video_mode=video_mode,
+        )
+
+        update_job_status(job_id, "completed", 100, f"✅ Hoàn tất! Video: {final_video}", output_file=final_video)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        update_job_status(job_id, "failed", 0, f"❌ Lỗi: {str(e)}", error=str(e))
+
+
 @app.route("/api/pipeline/start", methods=["POST"])
 def api_pipeline_start():
     """Bắt đầu pipeline tạo video (chạy nền)."""
-    global pipeline_status
-
-    if pipeline_status["running"]:
-        return jsonify({"error": "Pipeline đang chạy!"}), 400
-
-    data = request.json
-    voice = data.get("voice", "hoaimy")
-    rate = data.get("rate", "+20%")
+    data = request.json or {}
+    voice = data.get("voice", "vi-VN-HoaiMyNeural")
+    rate = data.get("rate", "+0%")
     style = data.get("style", 1)
     position = data.get("position", "bottom")
     visual_mode = data.get("visual_mode", "pexels")
@@ -581,12 +711,12 @@ def api_pipeline_start():
     music_offset_sec = data.get("music_offset_sec", 0)
     music_volume = data.get("music_volume", 0.22)
     music_mode = data.get("music_mode", "manual")
-    video_mode = data.get("video_mode", "realistic") # choices: realistic, veo
+    video_mode = data.get("video_mode", "realistic")  # choices: realistic, veo
     script_file = data.get("script", "script.txt")
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_file = data.get("output", f"output/video_{timestamp}.mp4")
 
-    if visual_mode not in ("pexels", "mix", "uploaded"):
+    if visual_mode not in ("pexels", "mix", "uploaded", "ai"):
         visual_mode = "pexels"
 
     if not isinstance(uploaded_images, list):
@@ -610,147 +740,73 @@ def api_pipeline_start():
     # Chỉ giữ tên file an toàn để tránh path traversal.
     uploaded_images = [os.path.basename(str(x)) for x in uploaded_images if str(x).strip()]
 
-    def run_pipeline():
-        global pipeline_status
-        pipeline_status = {
-            "running": True,
-            "step": "tts",
-            "progress": 10,
-            "message": "Đang tạo giọng đọc...",
-            "output_file": None,
-            "error": None,
-        }
+    # Khởi tạo Config Objects
+    audio_cfg = AudioConfig(
+        voice=voice,
+        rate=rate,
+        bgm_path=music_file,
+        bgm_volume=music_volume,
+        bgm_start_sec=music_offset_sec
+    )
+    sub_cfg = SubtitleConfig(
+        style=int(style) if str(style).isdigit() else 1,
+        position=position,
+        overlay_opacity=0.35
+    )
+    render_cfg = RenderConfig()
 
-        try:
-            with open(script_file, "r", encoding="utf-8") as f:
-                script_text = f.read().strip()
+    job_id = str(uuid.uuid4())
+    create_job(job_id, "queued", "Đang chờ...")
 
-            # Bước 1: TTS
-            from tts import run_tts
-            audio_path = "temp/audio.mp3"
-            srt_path = "temp/subtitles.srt"
-            os.makedirs("temp", exist_ok=True)
-            os.makedirs("output", exist_ok=True)
+    # Gửi công việc vào ThreadPoolExecutor
+    executor.submit(
+        run_pipeline,
+        job_id,
+        script_file,
+        visual_mode,
+        video_mode,
+        uploaded_images,
+        music_mode,
+        audio_cfg,
+        sub_cfg,
+        render_cfg,
+        output_file
+    )
 
-            run_tts(script_file, audio_path, srt_path, rate=rate, voice=voice)
-            pipeline_status.update({"step": "bg", "progress": 30, "message": "Đang chuẩn bị video nền..."})
-
-            # Bước 2: Tìm BG nếu cần
-            bg_dir = "backgrounds"
-            image_dir = UPLOADED_IMAGE_DIR
-            os.makedirs(bg_dir, exist_ok=True)
-            os.makedirs(image_dir, exist_ok=True)
-            supported = (".mp4", ".mov", ".avi", ".mkv", ".webm")
-            bg_videos = []
-            studio_images = []
-            
-            # Bước 2: Chuẩn bị tài nguyên hình ảnh/video bằng AI Visual Engine
-            bg_dir = "backgrounds"
-            image_dir = UPLOADED_IMAGE_DIR
-            os.makedirs(bg_dir, exist_ok=True)
-            os.makedirs(image_dir, exist_ok=True)
-            supported = (".mp4", ".mov", ".avi", ".mkv", ".webm")
-
-            # Nâng cấp: Xóa tài nguyên cũ để đảm bảo video luôn mới
-            if os.path.exists(bg_dir):
-                for f in os.listdir(bg_dir):
-                    if f.startswith("ai_image_") or f.startswith("pexels_") or f.startswith("pixabay_"):
-                        try: os.remove(os.path.join(bg_dir, f))
-                        except: pass
-
-            from bg_finder import find_and_download_background
-            pipeline_status.update({"step": "bg", "progress": 30, "message": "Đang tự vẽ bối cảnh bằng AI..."})
-            new_assets = find_and_download_background(script_text, output_dir=bg_dir)
-            
-            # Chỉ lấy những file vừa tải/vẽ xong
-            bg_videos = [os.path.basename(f) for f in new_assets]
-            downloaded_bg_assets = new_assets
-            studio_images = [f for f in os.listdir(image_dir) if f.lower().endswith(IMAGE_EXTENSIONS)]
-
-            if visual_mode == "uploaded" and not studio_images:
-                raise FileNotFoundError("Bạn đã chọn 'Chỉ dùng ảnh upload' nhưng chưa có ảnh nào.")
-
-                if visual_mode == "mix" and not (bg_videos or studio_images):
-                    raise FileNotFoundError("Không tìm thấy ảnh upload hoặc video Pexels/background để render.")
-
-            pipeline_status.update({"step": "render", "progress": 50, "message": "Đang render video..."})
-
-            # Bước 3: Render
-            from video_maker import make_video
-            bgm_dir = MUSIC_DIR
-            os.makedirs(bgm_dir, exist_ok=True)
-            bgm_files = [f for f in os.listdir(bgm_dir) if f.lower().endswith(MUSIC_EXTENSIONS)]
-            bgm_path = None
-
-            if music_mode == "manual":
-                if music_file:
-                    requested_path = os.path.join(bgm_dir, music_file)
-                    if os.path.exists(requested_path):
-                        bgm_path = requested_path
-                if bgm_path is None and bgm_files:
-                    bgm_path = os.path.join(bgm_dir, random.choice(bgm_files))
-
-            elif music_mode == "ai_local":
-                from music_finder import pick_local_music_for_script
-                bgm_path = pick_local_music_for_script(script_text, bgm_dir)
-                if bgm_path is None and bgm_files:
-                    bgm_path = os.path.join(bgm_dir, random.choice(bgm_files))
-
-            if bgm_path:
-                pipeline_status.update({
-                    "step": "render",
-                    "progress": 50,
-                    "message": f"Đang render video... (BGM: {os.path.basename(bgm_path)})",
-                })
-            else:
-                pipeline_status.update({
-                    "step": "render",
-                    "progress": 50,
-                    "message": "Đang render video... (không có BGM)",
-                })
-
-            final_video = make_video(
-                audio_path=audio_path,
-                srt_path=srt_path,
-                bg_dir=bg_dir,
-                output_path=output_file,
-                style=style,
-                position=position,
-                bgm_path=bgm_path,
-                bgm_start_sec=music_offset_sec,
-                bgm_volume=music_volume,
-                image_dir=image_dir,
-                visual_mode=visual_mode,
-                uploaded_images=uploaded_images if not downloaded_bg_assets else downloaded_bg_assets,
-                video_mode=video_mode,
-            )
-
-            pipeline_status.update({
-                "running": False,
-                "step": "done",
-                "progress": 100,
-                "message": f"✅ Hoàn tất! Video: {final_video}",
-                "output_file": final_video,
-            })
-
-        except Exception as e:
-            pipeline_status.update({
-                "running": False,
-                "step": "error",
-                "progress": 0,
-                "message": f"❌ Lỗi: {str(e)}",
-                "error": str(e),
-            })
-
-    thread = threading.Thread(target=run_pipeline, daemon=True)
-    thread.start()
-    return jsonify({"success": True, "message": "Pipeline đã bắt đầu!"})
+    return jsonify({"success": True, "job_id": job_id, "message": "Pipeline đã bắt đầu chạy nền!"})
 
 
 @app.route("/api/pipeline/status", methods=["GET"])
-def api_pipeline_status():
-    """Trả về trạng thái hiện tại của pipeline."""
-    return jsonify(pipeline_status)
+@app.route("/api/pipeline/status/<job_id>", methods=["GET"])
+def api_pipeline_status(job_id=None):
+    """Trả về trạng thái của job được yêu cầu hoặc job mới nhất để đảm bảo tương thích ngược."""
+    if job_id:
+        job = get_job(job_id)
+        if not job:
+            return jsonify({"error": "Job không tồn tại"}), 404
+    else:
+        job = get_latest_job()
+        if not job:
+            return jsonify({
+                "running": False,
+                "step": "",
+                "progress": 0,
+                "message": "Chưa có tiến trình nào được tạo",
+                "output_file": None,
+                "error": None
+            })
+
+    # Định dạng kết quả tương thích với UI cũ mong đợi
+    running = job["status"] in ("queued", "processing")
+    return jsonify({
+        "job_id": job["job_id"],
+        "running": running,
+        "step": job["status"],
+        "progress": job["progress"],
+        "message": job["message"],
+        "output_file": job["output_file"],
+        "error": job["error"]
+    })
 
 
 @app.route("/api/stats", methods=["GET"])
@@ -793,15 +849,18 @@ def serve_file(filepath):
 # AFFILIATE API (Nicks, Processing, Upload)
 # ============================================================
 
-import nick_manager
+from core.automation import nick_manager
+from core.utils.logger_config import logger
 
 @app.route("/api/nicks", methods=["GET"])
 def api_nicks_get():
+    """Api nicks get."""
     nicks = nick_manager.list_nicks()
     return jsonify(nicks)
 
 @app.route("/api/nicks/add", methods=["POST"])
 def api_nicks_add():
+    """Api nicks add."""
     data = request.json
     try:
         nick = nick_manager.add_nick(data.get("name"), data.get("username", ""), data.get("proxy", ""))
@@ -811,23 +870,26 @@ def api_nicks_add():
 
 @app.route("/api/nicks/login", methods=["POST"])
 def api_nicks_login():
+    """Api nicks login."""
     data = request.json
     nick_name = data.get("name")
     if not nick_name:
         return jsonify({"error": "Thiếu tên nick"}), 400
     
     def run_login():
+        """Run login."""
         try:
-            import uploader
+            from core.automation import uploader
             uploader.login_tiktok(nick_name)
         except Exception as e:
-            print(f"❌ Lỗi login: {e}")
+            logger.info(f"❌ Lỗi login: {e}")
 
     threading.Thread(target=run_login, daemon=True).start()
     return jsonify({"success": True, "message": "Đang mở trình duyệt..."})
 
 @app.route("/api/nicks/remove", methods=["POST"])
 def api_nicks_remove():
+    """Api nicks remove."""
     data = request.json
     try:
         nick_manager.remove_nick(data.get("name"))
@@ -837,9 +899,13 @@ def api_nicks_remove():
 
 @app.route("/api/affiliate/videos", methods=["GET"])
 def api_affiliate_videos():
+    """Api affiliate videos."""
     proc_dir = "processed"
+    out_dir = "output"
     os.makedirs(proc_dir, exist_ok=True)
-    files = glob.glob(os.path.join(proc_dir, "*.mp4"))
+    os.makedirs(out_dir, exist_ok=True)
+    
+    files = glob.glob(os.path.join(proc_dir, "*.mp4")) + glob.glob(os.path.join(out_dir, "*.mp4"))
     res = []
     for f in sorted(files, key=os.path.getmtime, reverse=True):
         res.append({
@@ -850,34 +916,80 @@ def api_affiliate_videos():
         })
     return jsonify(res)
 
+@app.route("/api/affiliate/videos", methods=["DELETE"])
+def api_affiliate_videos_delete():
+    """Api affiliate videos delete."""
+    data = request.json or {}
+    if data.get("all"):
+        for folder in ["processed", "output"]:
+            if os.path.exists(folder):
+                for f in glob.glob(os.path.join(folder, "*.mp4")):
+                    try: os.remove(f)
+                    except Exception: pass
+        return jsonify({"success": True, "message": "Đã xoá tất cả video"})
+    
+    paths = data.get("paths", [])
+    path = data.get("path")
+    if path and path not in paths:
+        paths.append(path)
+        
+    if paths:
+        for p in paths:
+            if os.path.exists(p):
+                try: os.remove(p)
+                except Exception: pass
+        return jsonify({"success": True})
+        
+    return jsonify({"error": "Không có file nào được chọn"}), 400
+
+@app.route("/media/<folder>/<filename>")
+def serve_media(folder, filename):
+    """Serve media."""
+    if folder not in ("processed", "output"):
+        return jsonify({"error": "Thư mục không hợp lệ"}), 400
+    return send_from_directory(folder, filename)
+@app.route("/api/background/fetch", methods=["POST"])
+def api_background_fetch():
+    """Api background fetch."""
+    data = request.json
+    url = data.get("url")
+    if not url:
+        return jsonify({"error": "Thiếu URL YouTube"}), 400
+    
+    from core.engines import bg_fetcher
+    bg_fetcher.start_download_thread(url)
+    return jsonify({"success": True, "message": "Đang tải video nền..."})
+
 @app.route("/api/affiliate/process", methods=["POST"])
 def api_affiliate_process():
-    global affiliate_status
-    if affiliate_status["running"]:
-        return jsonify({"error": "Đang có task chạy nền!"}), 400
-
+    """Api affiliate process."""
+    global jobs_status
     data = request.json
     url = data.get("url")
     file_path = data.get("file")
     hook = data.get("hook")
     cta = data.get("cta")
     bg_music = data.get("bg_music")
+    job_id = str(uuid.uuid4())
+    
+    jobs_status[job_id] = {"running": True, "task": "process", "progress": 10, "message": "Đang chuẩn bị...", "error": None}
 
-    def run_proc():
-        global affiliate_status
-        affiliate_status = {"running": True, "task": "process", "progress": 10, "message": "Đang tải video..." if url else "Đang xử lý...", "error": None}
+    def run_proc(jid):
+        """Run proc."""
+        global jobs_status
+        jobs_status[jid]["message"] = "Đang tải video..." if url else "Đang xử lý..."
         try:
-            from video_processor import download_video, process_video, process_local_video
+            from core.engines.video_processor import download_video, process_video, process_local_video
             if url:
                 raw = download_video(url)
                 if not raw:
                     raise Exception("Tải video thất bại")
-                affiliate_status["message"] = "Đang áp dụng biến đổi (FFmpeg)..."
-                affiliate_status["progress"] = 50
+                jobs_status[jid]["message"] = "Đang áp dụng biến đổi (FFmpeg)..."
+                jobs_status[jid]["progress"] = 50
                 processed = process_video(raw, hook_text=hook, cta_text=cta, bg_music=bg_music)
             elif file_path:
-                affiliate_status["message"] = "Đang áp dụng biến đổi video local..."
-                affiliate_status["progress"] = 50
+                jobs_status[jid]["message"] = "Đang áp dụng biến đổi video local..."
+                jobs_status[jid]["progress"] = 50
                 processed = process_local_video(file_path, hook_text=hook, cta_text=cta, bg_music=bg_music)
             else:
                 raise Exception("Thiếu URL hoặc File")
@@ -885,87 +997,92 @@ def api_affiliate_process():
             if not processed:
                 raise Exception("Xử lý video thất bại")
 
-            affiliate_status.update({"running": False, "progress": 100, "message": f"✅ Xử lý xong!"})
+            jobs_status[jid].update({"running": False, "progress": 100, "message": f"✅ Xử lý xong!"})
         except Exception as e:
-            affiliate_status.update({"running": False, "progress": 0, "message": f"❌ Lỗi: {str(e)}", "error": str(e)})
+            jobs_status[jid].update({"running": False, "progress": 0, "message": f"❌ Lỗi: {str(e)}", "error": str(e)})
 
-    threading.Thread(target=run_proc, daemon=True).start()
-    return jsonify({"success": True, "message": "Bắt đầu xử lý..."})
+    threading.Thread(target=run_proc, args=(job_id,), daemon=True).start()
+    return jsonify({"success": True, "job_id": job_id, "message": "Bắt đầu xử lý..."})
 
 @app.route("/api/affiliate/upload", methods=["POST"])
 def api_affiliate_upload():
-    global affiliate_status
-    if affiliate_status["running"]:
-        return jsonify({"error": "Đang có task chạy nền!"}), 400
-
+    """Api affiliate upload."""
+    global jobs_status
     data = request.json
     video_path = data.get("video_path")
     nick_name = data.get("nick_name")
     title = data.get("title", "")
     tags = data.get("tags", "")
+    job_id = str(uuid.uuid4())
 
-    def run_up():
-        global affiliate_status
-        affiliate_status = {"running": True, "task": "upload", "progress": 10, "message": f"Mở trình duyệt cho {nick_name}...", "error": None}
+    jobs_status[job_id] = {"running": True, "task": "upload", "progress": 10, "message": f"Mở trình duyệt cho {nick_name}...", "error": None}
+
+    def run_up(jid):
+        """Run up."""
+        global jobs_status
         try:
-            from uploader import upload_video
-            affiliate_status["progress"] = 30
+            from core.automation.uploader import upload_video
+            jobs_status[jid]["progress"] = 30
             success = upload_video(video_path, title, tags, nick_name)
             if success:
-                import nick_manager
+                from core.automation import nick_manager
                 nick_manager.record_upload(nick_name, success=True)
-                affiliate_status.update({"running": False, "progress": 100, "message": f"✅ Upload thành công cho {nick_name}!"})
+                jobs_status[jid].update({"running": False, "progress": 100, "message": f"✅ Upload thành công cho {nick_name}!"})
             else:
                 raise Exception("Upload thất bại. Có thể do popup bản quyền hoặc captcha.")
         except Exception as e:
-            affiliate_status.update({"running": False, "progress": 0, "message": f"❌ Lỗi: {str(e)}", "error": str(e)})
+            jobs_status[jid].update({"running": False, "progress": 0, "message": f"❌ Lỗi: {str(e)}", "error": str(e)})
 
-    threading.Thread(target=run_up, daemon=True).start()
-    return jsonify({"success": True, "message": "Bắt đầu upload..."})
+    threading.Thread(target=run_up, args=(job_id,), daemon=True).start()
+    return jsonify({"success": True, "job_id": job_id, "message": "Bắt đầu upload..."})
 
-@app.route("/api/affiliate/status", methods=["GET"])
-def api_affiliate_status():
-    return jsonify(affiliate_status)
+@app.route("/api/jobs/status/<job_id>", methods=["GET"])
+def api_jobs_status(job_id):
+    """Api jobs status."""
+    if job_id not in jobs_status:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(jobs_status[job_id])
 
 
 @app.route("/api/affiliate/upload_queue", methods=["POST"])
 def api_affiliate_upload_queue():
-    global affiliate_status
-    if affiliate_status["running"]:
-        return jsonify({"error": "Đang có task chạy nền!"}), 400
-
+    """Api affiliate upload queue."""
+    global jobs_status
     data = request.json
     jobs = data.get("jobs", [])
     if not jobs:
         return jsonify({"error": "Không có video nào trong hàng đợi!"}), 400
+        
+    job_id = str(uuid.uuid4())
+    jobs_status[job_id] = {"running": True, "task": "upload_queue", "progress": 10, "message": f"Bắt đầu hàng đợi ({len(jobs)} video)...", "error": None}
 
-    def run_queue():
-        global affiliate_status
-        affiliate_status = {"running": True, "task": "upload_queue", "progress": 10, "message": f"Bắt đầu hàng đợi ({len(jobs)} video)...", "error": None}
+    def run_queue(jid):
+        """Run queue."""
+        global jobs_status
         try:
-            from uploader import upload_queue
+            from core.automation.uploader import upload_queue
             
             # Theo dõi process trong khi upload queue chạy. Để đơn giản upload_queue() chạy đồng bộ.
             results = upload_queue(jobs)
             
             # Ghi lại dữ liệu nick_manager
-            import nick_manager
+            from core.automation import nick_manager
             for success_job in results.get("success", []):
                 nick_manager.record_upload(success_job.get("nick_name"), success=True)
             for failed_job in results.get("failed", []):
                 nick_manager.record_upload(failed_job.get("nick_name"), success=False)
                 
             success_count = len(results.get("success", []))
-            affiliate_status.update({
+            jobs_status[jid].update({
                 "running": False, 
                 "progress": 100, 
                 "message": f"✅ Queue hoàn tất! Thành công {success_count}/{len(jobs)}"
             })
         except Exception as e:
-            affiliate_status.update({"running": False, "progress": 0, "message": f"❌ Lỗi queue: {str(e)}", "error": str(e)})
+            jobs_status[jid].update({"running": False, "progress": 0, "message": f"❌ Lỗi queue: {str(e)}", "error": str(e)})
 
-    threading.Thread(target=run_queue, daemon=True).start()
-    return jsonify({"success": True, "message": "Bắt đầu chạy upload queue..."})
+    threading.Thread(target=run_queue, args=(job_id,), daemon=True).start()
+    return jsonify({"success": True, "job_id": job_id, "message": "Bắt đầu chạy upload queue..."})
 
 
 @app.route("/api/affiliate/schedule", methods=["POST"])
@@ -997,7 +1114,7 @@ def api_affiliate_schedule():
     return jsonify({"success": True, "message": f"Đã lên lịch {len(jobs)} video. Sẽ tự đăng vào giờ vàng!"})
 
 if __name__ == "__main__":
-    os.makedirs("webapp", exist_ok=True)
+    os.makedirs("frontend/dist", exist_ok=True)
     os.makedirs("temp", exist_ok=True)
     os.makedirs("output", exist_ok=True)
     os.makedirs("backgrounds", exist_ok=True)
@@ -1005,9 +1122,30 @@ if __name__ == "__main__":
     os.makedirs(UPLOADED_IMAGE_DIR, exist_ok=True)
     os.makedirs("processed", exist_ok=True)
     os.makedirs("profiles", exist_ok=True)
+    
+    from core.data.jobs_db import init_db, clean_stuck_jobs
+    init_db()
+    clean_stuck_jobs()
 
-    print("🎬 VideoMaker Pro - Web Server")
-    print("=" * 40)
-    print("🌐 Mở trình duyệt tại: http://localhost:5000")
-    print("=" * 40)
+    logger.info("🎬 VideoMaker Pro - Web Server")
+    logger.info("=" * 40)
+    logger.info("🌐 Mở trình duyệt tại: http://localhost:5000")
+    logger.info("=" * 40)
+    
+    import subprocess
+    import sys
+    # Chỉ khởi chạy trình watch frontend khi chạy thực sự (không phải lần init đầu của reloader)
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        logger.info("🚀 Khởi động Frontend Auto-build (Vite Watch)...")
+        try:
+            # Chạy nền npm run build -- --watch
+            subprocess.Popen(
+                ["npm", "run", "build", "--", "--watch"], 
+                cwd=os.path.join(os.path.dirname(__file__), "frontend"),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            logger.info("⚠️ Lỗi khởi chạy frontend auto-build:", e)
+
     app.run(debug=True, host="0.0.0.0", port=5000)

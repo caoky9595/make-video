@@ -35,14 +35,15 @@ Cách dùng:
 import argparse
 import os
 import sys
+from core.utils.logger_config import logger
 
-from tts import run_tts
-from video_maker import make_video
-from uploader import login_tiktok, upload_video, upload_queue
-from bg_finder import find_and_download_background
-from video_processor import download_video, process_video, batch_process
-from caption_builder import build_caption, auto_select_format
-from nick_manager import (
+from core.engines.tts import run_tts
+from core.engines.video_maker import make_video
+from core.automation.uploader import login_tiktok, upload_video, upload_queue
+from core.engines.bg_finder import find_and_download_background
+from core.engines.video_processor import download_video, process_video, batch_process
+from core.utils.caption_builder import build_caption, auto_select_format
+from core.automation.nick_manager import (
     add_nick, remove_nick, list_nicks,
     get_upload_plan, record_upload, get_available_nicks,
 )
@@ -55,7 +56,7 @@ from nick_manager import (
 def cmd_create(args):
     """Tạo video từ kịch bản text (chế độ cũ)."""
     if not os.path.exists(args.script):
-        print(f"❌ Không tìm thấy file kịch bản: {args.script}")
+        logger.info(f"❌ Không tìm thấy file kịch bản: {args.script}")
         sys.exit(1)
 
     with open(args.script, "r", encoding="utf-8") as f:
@@ -64,15 +65,15 @@ def cmd_create(args):
     script_parts = [script_text]
     if args.auto_split:
         try:
-            from ai_splitter import split_story_script
+            from core.utils.ai_splitter import split_story_script
             result = split_story_script(script_text)
             if result is None:
                 sys.exit(1)
             elif len(result) > 1:
                 script_parts = result
-                print(f"  [AI Splitter] ✅ Đã chia thành {len(script_parts)} phần!")
+                logger.info(f"  [AI Splitter] ✅ Đã chia thành {len(script_parts)} phần!")
         except ImportError:
-            print("❌ Không tìm thấy module ai_splitter.py")
+            logger.info("❌ Không tìm thấy module ai_splitter.py")
 
     # Tự động tìm video nền nếu cần
     supported = (".mp4", ".mov", ".avi", ".mkv", ".webm")
@@ -80,12 +81,12 @@ def cmd_create(args):
     bg_videos = [f for f in os.listdir(args.bg_dir) if f.lower().endswith(supported)]
 
     if not bg_videos and args.auto_bg and not args.no_auto_bg:
-        print("\n🔍 Không có video nền. Tự động tìm trên Pexels...")
+        logger.info("\n🔍 Không có video nền. Tự động tìm trên Pexels...")
         find_and_download_background(script_text, output_dir=args.bg_dir)
         bg_videos = [f for f in os.listdir(args.bg_dir) if f.lower().endswith(supported)]
 
     if not bg_videos:
-        print(f"❌ Không tìm thấy video nền trong '{args.bg_dir}/'")
+        logger.info(f"❌ Không tìm thấy video nền trong '{args.bg_dir}/'")
         sys.exit(1)
 
     # Nhạc nền
@@ -97,16 +98,16 @@ def cmd_create(args):
         bgm_path = os.path.join(args.bgm_dir, random.choice(bgm_files))
 
     # Pipeline
-    print("=" * 60)
-    print("🎬 TIKTOK VIDEO CREATOR (từ kịch bản)")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("🎬 TIKTOK VIDEO CREATOR (từ kịch bản)")
+    logger.info("=" * 60)
 
     for i, part_text in enumerate(script_parts):
         part_num = i + 1
         is_multi = len(script_parts) > 1
 
         if is_multi:
-            print(f"\n{'='*50}\n🔄 PHẦN {part_num}/{len(script_parts)}\n{'='*50}")
+            logger.info(f"\n{'='*50}\n🔄 PHẦN {part_num}/{len(script_parts)}\n{'='*50}")
             temp_script = f"temp/script_part{part_num}.txt"
             os.makedirs("temp", exist_ok=True)
             with open(temp_script, "w", encoding="utf-8") as f:
@@ -122,10 +123,10 @@ def cmd_create(args):
             srt_path = "temp/subtitles.srt"
             current_output = args.output
 
-        print(f"\n📌 BƯỚC 1: TTS...")
+        logger.info(f"\n📌 BƯỚC 1: TTS...")
         run_tts(current_script, audio_path, srt_path, rate=args.rate, voice=args.voice)
 
-        print(f"\n📌 BƯỚC 2: Render...")
+        logger.info(f"\n📌 BƯỚC 2: Render...")
         final_video = make_video(
             audio_path=audio_path, srt_path=srt_path,
             bg_dir=args.bg_dir, output_path=current_output,
@@ -133,14 +134,14 @@ def cmd_create(args):
         )
 
         if args.upload:
-            print(f"\n📌 BƯỚC 3: Upload...")
+            logger.info(f"\n📌 BƯỚC 3: Upload...")
             tags = [t.strip() for t in args.tags.split(",") if t.strip()]
             title = f"{args.title} (Phần {part_num})" if args.title and is_multi else args.title
             upload_video(video_path=final_video, title=title, tags=tags, nick_name=args.nick)
         else:
-            print(f"\n✅ Video xong: {final_video}")
+            logger.info(f"\n✅ Video xong: {final_video}")
 
-    print(f"\n{'='*60}\n🎉 HOÀN TẤT!\n{'='*60}")
+    logger.info(f"\n{'='*60}\n🎉 HOÀN TẤT!\n{'='*60}")
 
 
 # ============================================================
@@ -149,28 +150,28 @@ def cmd_create(args):
 
 def cmd_process(args):
     """Tải và xử lý video từ nguồn bên ngoài."""
-    print("=" * 60)
-    print("🏭 CONTENT FACTORY")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("🏭 CONTENT FACTORY")
+    logger.info("=" * 60)
 
     if args.batch:
         results = batch_process(args.batch)
-        print(f"\n✅ {len(results)} video đã xử lý xong trong processed/")
+        logger.info(f"\n✅ {len(results)} video đã xử lý xong trong processed/")
 
     elif args.url:
         raw = download_video(args.url)
         if raw:
             output = process_video(raw, hook_text=args.hook, cta_text=args.cta, bg_music=getattr(args, 'bg_music', None))
             if output:
-                print(f"\n✅ Video sẵn sàng: {output}")
+                logger.info(f"\n✅ Video sẵn sàng: {output}")
 
     elif args.file:
         output = process_video(args.file, hook_text=args.hook, cta_text=args.cta, bg_music=getattr(args, 'bg_music', None))
         if output:
-            print(f"\n✅ Video sẵn sàng: {output}")
+            logger.info(f"\n✅ Video sẵn sàng: {output}")
 
     else:
-        print("❌ Phải chỉ định --url, --file, hoặc --batch")
+        logger.info("❌ Phải chỉ định --url, --file, hoặc --batch")
 
 
 # ============================================================
@@ -179,33 +180,33 @@ def cmd_process(args):
 
 def cmd_full(args):
     """Pipeline đầy đủ: Tải → Xử lý → TTS → Upload."""
-    print("=" * 60)
-    print("🚀 FULL AFFILIATE PIPELINE")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("🚀 FULL AFFILIATE PIPELINE")
+    logger.info("=" * 60)
 
     # Bước 1: Tải/xử lý video
     if args.url:
-        print("\n📌 BƯỚC 1: Tải video...")
+        logger.info("\n📌 BƯỚC 1: Tải video...")
         raw = download_video(args.url)
         if not raw:
-            print("❌ Tải video thất bại")
+            logger.info("❌ Tải video thất bại")
             return
-        print("\n📌 BƯỚC 2: Xử lý video...")
+        logger.info("\n📌 BƯỚC 2: Xử lý video...")
         processed = process_video(raw, hook_text=args.hook, cta_text=args.cta, bg_music=getattr(args, 'bg_music', None))
     elif args.file:
-        print("\n📌 BƯỚC 1-2: Xử lý video local...")
+        logger.info("\n📌 BƯỚC 1-2: Xử lý video local...")
         processed = process_video(args.file, hook_text=args.hook, cta_text=args.cta, bg_music=getattr(args, 'bg_music', None))
     else:
-        print("❌ Phải chỉ định --url hoặc --file")
+        logger.info("❌ Phải chỉ định --url hoặc --file")
         return
 
     if not processed:
-        print("❌ Xử lý video thất bại")
+        logger.info("❌ Xử lý video thất bại")
         return
 
     # Bước 2.5: Thêm TTS (nếu có script)
     if args.tts_script:
-        print("\n📌 BƯỚC 3: Tạo TTS voiceover...")
+        logger.info("\n📌 BƯỚC 3: Tạo TTS voiceover...")
         os.makedirs("temp", exist_ok=True)
         tts_script_file = "temp/tts_script_temp.txt"
         with open(tts_script_file, "w", encoding="utf-8") as f:
@@ -216,11 +217,11 @@ def cmd_full(args):
         run_tts(tts_script_file, tts_audio, tts_srt, voice=args.voice)
 
         # TODO: Ghép TTS audio vào processed video bằng FFmpeg
-        print(f"  ✅ TTS audio: {tts_audio}")
-        print(f"  ⚠️  Ghép TTS vào video sẽ được tích hợp trong bản sau")
+        logger.info(f"  ✅ TTS audio: {tts_audio}")
+        logger.info(f"  ⚠️  Ghép TTS vào video sẽ được tích hợp trong bản sau")
 
     # Bước 3: Tạo caption
-    print("\n📌 BƯỚC 4: Tạo caption...")
+    logger.info("\n📌 BƯỚC 4: Tạo caption...")
     fmt = auto_select_format()
     caption_data = build_caption(
         template_type=fmt,
@@ -230,12 +231,12 @@ def cmd_full(args):
         problem=args.hook or "Vấn đề phổ biến",
         result="Hiệu quả bất ngờ",
     )
-    print(f"  Format: {fmt}")
-    print(f"  Caption: {caption_data['caption'][:80]}...")
+    logger.info(f"  Format: {fmt}")
+    logger.info(f"  Caption: {caption_data['caption'][:80]}...")
 
     # Bước 4: Upload
     nick = args.nick or "default"
-    print(f"\n📌 BƯỚC 5: Upload cho nick [{nick}]...")
+    logger.info(f"\n📌 BƯỚC 5: Upload cho nick [{nick}]...")
     success = upload_video(
         video_path=processed,
         title=caption_data["caption"],
@@ -245,9 +246,9 @@ def cmd_full(args):
 
     if success:
         record_upload(nick, success=True)
-        print(f"\n🎉 PIPELINE HOÀN TẤT!")
+        logger.info(f"\n🎉 PIPELINE HOÀN TẤT!")
     else:
-        print(f"\n❌ Upload thất bại")
+        logger.info(f"\n❌ Upload thất bại")
 
 
 # ============================================================
@@ -263,13 +264,13 @@ def cmd_nick(args):
 
     elif subcmd == "add":
         if not args.name:
-            print("❌ Thiếu tên nick. VD: python main.py nick add nick_01")
+            logger.info("❌ Thiếu tên nick. VD: python main.py nick add nick_01")
             return
         add_nick(args.name, username=args.username or "")
 
     elif subcmd == "remove":
         if not args.name:
-            print("❌ Thiếu tên nick. VD: python main.py nick remove nick_01")
+            logger.info("❌ Thiếu tên nick. VD: python main.py nick remove nick_01")
             return
         remove_nick(args.name)
 
@@ -281,7 +282,7 @@ def cmd_nick(args):
         get_upload_plan()
 
     else:
-        print("❌ Lệnh nick không hợp lệ. Dùng: list, add, remove, login, plan")
+        logger.info("❌ Lệnh nick không hợp lệ. Dùng: list, add, remove, login, plan")
 
 
 # ============================================================
@@ -289,6 +290,7 @@ def cmd_nick(args):
 # ============================================================
 
 def main():
+    """Main."""
     parser = argparse.ArgumentParser(
         description="🚀 TikTok Affiliate Automation Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -347,11 +349,11 @@ def main():
 
     if args.command is None:
         parser.print_help()
-        print("\n💡 Bắt đầu nhanh:")
-        print("  python main.py create --script script.txt          # Tạo video từ kịch bản")
-        print("  python main.py process --url 'https://...'         # Xử lý video từ URL")
-        print("  python main.py full --file video.mp4 --nick test   # Pipeline đầy đủ")
-        print("  python main.py nick list                           # Xem danh sách nick")
+        logger.info("\n💡 Bắt đầu nhanh:")
+        logger.info("  python main.py create --script script.txt          # Tạo video từ kịch bản")
+        logger.info("  python main.py process --url 'https://...'         # Xử lý video từ URL")
+        logger.info("  python main.py full --file video.mp4 --nick test   # Pipeline đầy đủ")
+        logger.info("  python main.py nick list                           # Xem danh sách nick")
         return
 
     commands = {
