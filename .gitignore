@@ -9,6 +9,9 @@ backgrounds/
 audio_bg/
 uploaded_images/
 tiktok_cookies.json
+tiktok_session.txt
+.tiktok_profile/
+*.session
 config.json
 .DS_Store
 *.mp4

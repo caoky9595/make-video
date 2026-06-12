@@ -14,10 +14,35 @@ TIKTOK_VOICES = {
     "tiktok_nam_2": "BV075_streaming", 
 }
 
+def _mp3_bytes_duration(seg_bytes: bytes) -> float:
+    """Đo độ dài (giây) của một đoạn mp3 từ bytes. Trả 0.0 nếu lỗi."""
+    import tempfile
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            f.write(seg_bytes)
+            tmp = f.name
+        from moviepy.editor import AudioFileClip
+        clip = AudioFileClip(tmp)
+        try:
+            return float(clip.duration or 0.0)
+        finally:
+            clip.close()
+    except Exception:
+        return 0.0
+    finally:
+        if tmp and os.path.exists(tmp):
+            try: os.remove(tmp)
+            except OSError: pass
+
+
 def generate_tiktok_tts(text: str, voice: str, output_file: str):
     """
     Gọi TikTok TTS API không chính thức để lấy file MP3.
     Hỗ trợ kịch bản siêu dài bằng cách tự động chia nhỏ text.
+
+    Trả về danh sách [(chunk_text, duration_giây), ...] theo từng đoạn đã đọc,
+    dùng để dựng phụ đề khớp chính xác với audio TikTok.
     """
     voice_code = TIKTOK_VOICES.get(voice, "BV074_streaming")
     
@@ -31,12 +56,11 @@ def generate_tiktok_tts(text: str, voice: str, output_file: str):
         session_id = os.getenv("TIKTOK_SESSION_ID", "")
         
     if not session_id:
-        import webbrowser
-        try:
-            webbrowser.open("https://www.tiktok.com/login")
-        except Exception:
-            pass
-        raise Exception("Chưa cấu hình TIKTOK_SESSION_ID. Hệ thống đã mở trình duyệt để bạn đăng nhập TikTok. Vui lòng bấm 'KẾT NỐI TIKTOK TỰ ĐỘNG' để quét QR.")
+        raise Exception(
+            "Chưa cấu hình TIKTOK_SESSION_ID. Cách lấy: đăng nhập tiktok.com trên trình duyệt "
+            "→ mở DevTools (F12) → Application → Cookies → copy giá trị 'sessionid' → "
+            "dán vào file .env dạng TIKTOK_SESSION_ID=xxxxx (hoặc giọng dự phòng FPT 'banmai')."
+        )
 
     import re
     import time
@@ -97,7 +121,8 @@ def generate_tiktok_tts(text: str, voice: str, output_file: str):
     }
     
     all_audio_bytes = b""
-    
+    chunk_durations = []  # [(chunk_text, duration_giây), ...] để dựng phụ đề khớp audio
+
     for idx, chunk in enumerate(chunks):
         chunk = chunk.strip()
         if not chunk: continue
@@ -156,7 +181,9 @@ def generate_tiktok_tts(text: str, voice: str, output_file: str):
             if status_code == 0:
                 vstr = data.get("data", {}).get("v_str")
                 if vstr:
-                    all_audio_bytes += base64.b64decode(vstr)
+                    seg = base64.b64decode(vstr)
+                    all_audio_bytes += seg
+                    chunk_durations.append((chunk, _mp3_bytes_duration(seg)))
                 else:
                     raise Exception(f"Phản hồi thành công nhưng v_str trống ở đoạn {idx+1}.")
             else:
@@ -169,5 +196,5 @@ def generate_tiktok_tts(text: str, voice: str, output_file: str):
             
     with open(output_file, "wb") as f:
         f.write(all_audio_bytes)
-        
-    return True
+
+    return chunk_durations

@@ -6,26 +6,6 @@ export const Editor: React.FC = () => {
   const [genProgress, setGenProgress] = useState(0);
   const [pipelineStatus, setPipelineStatus] = useState<any>(null);
   const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem('editor_voice') || 'tiktok_nu_1');
-  const [isLoggingInTikTok, setIsLoggingInTikTok] = useState(false);
-
-  const handleTikTokLogin = async () => {
-    setIsLoggingInTikTok(true);
-    try {
-      const res = await fetch('/api/tiktok/login', {
-        method: 'POST',
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert('Đăng nhập thành công! Đã tự động kết nối giọng đọc TikTok TTS.');
-      } else {
-        alert('Lỗi đăng nhập: ' + (data.error || 'Không thể tự lấy sessionid. Hãy thử đăng nhập thủ công.'));
-      }
-    } catch (e: any) {
-      alert('Không kết nối được tới server: ' + e.message);
-    } finally {
-      setIsLoggingInTikTok(false);
-    }
-  };
 
   useEffect(() => {
     let interval: any;
@@ -100,22 +80,17 @@ export const Editor: React.FC = () => {
               localStorage.setItem('editor_voice', e.target.value);
             }}
           >
-            <option value="tiktok_nu_1">TikTok - Giọng Nữ Review</option>
-            <option value="tiktok_nam_1">TikTok - Giọng Nam Bí ẩn</option>
-            <option value="hoaimy">Hoài My (Edge) - Truyền cảm</option>
-            <option value="namminh">Nam Minh (Edge) - Trầm ấm</option>
-            <option value="banmai">Ban Mai (FPT) - Nữ Bắc</option>
+            <option value="tiktok_nu_1">⭐ TikTok - Giọng Nữ (hợp viral)</option>
+            <option value="tiktok_nam_1">⭐ TikTok - Giọng Nam (hợp viral)</option>
+            <option value="banmai">Ban Mai (FPT) - Nữ Bắc tự nhiên</option>
+            <option value="hoaimy">Hoài My (Edge) - dự phòng</option>
+            <option value="namminh">Nam Minh (Edge) - dự phòng</option>
           </select>
           {selectedVoice.startsWith('tiktok') && (
-            <button 
-              className="glow-btn" 
-              style={{ fontSize: '11px', padding: '8px 12px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}
-              onClick={handleTikTokLogin}
-              disabled={isLoggingInTikTok}
-            >
-              {isLoggingInTikTok ? <span className="icon animate-spin">sync</span> : <span className="icon">login</span>}
-              {isLoggingInTikTok ? 'ĐANG CHỜ ĐĂNG NHẬP...' : 'KẾT NỐI TIKTOK TỰ ĐỘNG'}
-            </button>
+            <p style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.4 }}>
+              Giọng TikTok cần <b>TIKTOK_SESSION_ID</b> trong file <code>.env</code>.
+              Đăng nhập tiktok.com trên trình duyệt → mở DevTools → Application → Cookies → copy giá trị <code>sessionid</code>.
+            </p>
           )}
 
           <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--primary)', marginTop: '0.5rem' }}>
@@ -285,24 +260,7 @@ export const Editor: React.FC = () => {
                <div style={{ width: '100%', padding: '1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)', backdropFilter: 'blur(10px)', marginBottom: '1rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                      <span style={{ fontSize: '11px', fontWeight: 800, color: pipelineStatus.error ? '#f87171' : 'var(--primary)', textTransform: 'none' }}>
-                       {pipelineStatus.error ? (
-                         <span>
-                           {pipelineStatus.error}{' '}
-                           <button
-                             onClick={handleTikTokLogin}
-                             disabled={isLoggingInTikTok}
-                             style={{ 
-                               background: 'transparent', border: 'none', color: '#60a5fa', 
-                               textDecoration: 'underline', fontWeight: 'bold', marginLeft: '5px', 
-                               cursor: 'pointer', fontSize: '11px', padding: 0
-                             }}
-                           >
-                             {isLoggingInTikTok ? '[Đang chờ...]' : '[Kết nối lại]'}
-                           </button>
-                         </span>
-                       ) : (
-                         pipelineStatus.message || 'Đang xử lý...'
-                       )}
+                       {pipelineStatus.error ? pipelineStatus.error : (pipelineStatus.message || 'Đang xử lý...')}
                      </span>
                      <span style={{ fontSize: '11px', fontWeight: 800 }}>{pipelineStatus.progress}%</span>
                   </div>

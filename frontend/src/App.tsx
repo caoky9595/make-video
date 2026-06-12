@@ -2,9 +2,6 @@ import { useState, useEffect } from 'react'
 import { api } from './api'
 import { Sidebar } from './components/Sidebar'
 import { Editor } from './components/Editor'
-import { Factory } from './components/Factory'
-import { NicksManager } from './components/NicksManager'
-import { Uploader } from './components/Uploader'
 
 function App() {
   const [activePage, setActivePage] = useState(() => {
@@ -71,15 +68,13 @@ function App() {
     if (activePage === 'dashboard') {
       Promise.all([
         api.get('/stats'),
-        api.get('/nicks'),
         api.get('/affiliate/videos')
-      ]).then(([statsData, nicksData, videosData]) => {
+      ]).then(([statsData, videosData]) => {
         setStats({
           videos_created: statsData.videos_created || 0,
           total_size_mb: statsData.total_size_mb || 0,
           ai_used_today: statsData.ai_used_today || 0,
           ai_limit: statsData.ai_limit || 10,
-          total_nicks: Object.keys(nicksData || {}).length
         });
         setVideos(videosData || []);
       }).catch(console.error);
@@ -157,9 +152,8 @@ function App() {
               </div>
             </div>
             
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '2rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '2rem' }}>
               {stats ? [
-                {label: 'Tài khoản', value: `${stats.total_nicks}`, icon: 'group', color: '#9333ea'}, 
                 {label: 'Sản lượng', value: `${stats.videos_created}`, icon: 'movie', color: '#3b82f6'},
                 {label: 'Dung lượng', value: `${stats.total_size_mb} MB`, icon: 'sd_storage', color: '#10b981'},
                 {label: 'Lượt AI', value: `${stats.ai_used_today}/${stats.ai_limit}`, icon: 'psychology', color: '#f59e0b'}
@@ -174,7 +168,7 @@ function App() {
                    <h2 style={{ fontSize: '2.5rem', fontWeight: 900 }}>{stat.value}</h2>
                 </div>
               )) : (
-                <div style={{ gridColumn: 'span 4', textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                <div style={{ gridColumn: 'span 3', textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
                   <span className="icon animate-spin" style={{ fontSize: '2rem' }}>sync</span>
                   <p style={{ marginTop: '1rem' }}>Đang tải dữ liệu thực tế...</p>
                 </div>
@@ -239,18 +233,6 @@ function App() {
 
           <div style={{ display: activePage === 'editor' ? 'block' : 'none', height: '100%' }}>
             <Editor />
-          </div>
-          
-          <div style={{ display: activePage === 'factory' ? 'block' : 'none', height: '100%' }}>
-            <Factory />
-          </div>
-
-          <div style={{ display: activePage === 'nicks' ? 'block' : 'none', height: '100%' }}>
-            <NicksManager />
-          </div>
-
-          <div style={{ display: activePage === 'uploader' ? 'block' : 'none', height: '100%' }}>
-            <Uploader />
           </div>
         </div>
       </main>

@@ -1,17 +1,13 @@
 # Core
 edge-tts
 moviepy==1.0.3
+imageio-ffmpeg
+numpy
 Pillow
 python-dotenv
 requests
 flask
 flask-cors
 
-# Upgrade: Anti-detect browser automation (thay Playwright)
-DrissionPage
-
-# Video processing pipeline (mới thêm)
+# Tải video nền từ YouTube (bg_fetcher)
 yt-dlp
-
-# Scheduling (mới thêm)
-APScheduler

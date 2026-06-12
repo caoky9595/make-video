@@ -88,7 +88,6 @@ pipeline_status = {
     "error": None,
 }
 
-jobs_status = {}
 import uuid
 
 
@@ -181,8 +180,25 @@ def _parse_music_volume(value, default=0.22):
 @app.route("/api/voices", methods=["GET"])
 def api_voices():
     """Trả về danh sách tất cả giọng đọc."""
-    from core.engines.tts import EDGE_VOICES, FPT_VOICES
+    from core.engines.tts import EDGE_VOICES, FPT_VOICES, TIKTOK_VOICES
     voices = []
+    # TikTok TTS (giọng Việt tự nhiên, hợp viral) — ưu tiên hiển thị đầu danh sách
+    tiktok_session_ready = bool(
+        os.getenv("TIKTOK_SESSION_ID")
+        or os.path.exists(os.path.join("core", "engines", "tiktok_session.txt"))
+    )
+    for key, info in TIKTOK_VOICES.items():
+        voices.append({
+            "id": key,
+            "name": key.replace("tiktok_", "TikTok ").title(),
+            "gender": info["gender"],
+            "region": "VN",
+            "engine": "TikTok TTS",
+            "desc": info["desc"],
+            "free": True,
+            "needs_session": True,
+            "ready": tiktok_session_ready,
+        })
     for key, voice_id in EDGE_VOICES.items():
         gender = "Nữ" if "HoaiMy" in voice_id else "Nam"
         region = "Bắc"
@@ -206,17 +222,6 @@ def api_voices():
             "free": True,
         })
     return jsonify(voices)
-
-
-@app.route("/api/tiktok/login", methods=["POST"])
-def api_tiktok_login():
-    """Tự động mở trình duyệt lấy sessionid từ TikTok login."""
-    from core.automation.tiktok_login import run_tiktok_login_automation
-    success, result = run_tiktok_login_automation()
-    if success:
-        return jsonify({"success": True, "session_id": result})
-    else:
-        return jsonify({"success": False, "error": result}), 400
 
 
 @app.route("/api/tts/preview", methods=["POST"])
@@ -263,7 +268,7 @@ def api_script_generate():
     data = request.json
     idea = data.get("idea", "").strip()
     if not idea:
-        idea = "Một sự thật tâm lý học cực kỳ bất ngờ mà 99% mọi người không biết (Random)"
+        idea = "Một mẹo vặt nhà bếp hữu ích bất ngờ mà ít người biết (bảo quản thực phẩm, khử mùi, dọn dẹp nhanh) (Random)"
         
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -273,30 +278,34 @@ def api_script_generate():
     mode = data.get("mode", "affiliate")
     
     if mode == "viral":
-        prompt = f"""Bạn là một Chuyên gia Sáng tạo Nội dung Viral trên TikTok.
-        Nhiệm vụ: Biến ý tưởng "{idea}" thành một video giá trị cao, thu hút triệu view.
-        
-        Quy tắc Chế độ VIRAL (CHỈ NỘI DUNG):
-        1. **KHÔNG bán hàng**, không nhắc đến sản phẩm, không gắn link.
-        2. Tập trung 100% vào việc mang lại kiến thức, sự tò mò hoặc cảm xúc mạnh.
-        3. Dùng kỹ thuật "Pattern Interrupt" ở 3 giây đầu để gây sốc.
-        4. Kết thúc bằng một câu hỏi để tăng bình luận.
-        
-        Cấu trúc: Hook mạnh -> Nội dung giá trị -> Câu hỏi tương tác.
-        Quy tắc: NGẮN, GẮT, THẤM. CHỈ TRẢ VỀ lời thoại.
+        prompt = f"""Bạn là Chuyên gia Nội dung TikTok ngách Mẹo Vặt Nhà Bếp & Gia Đình, chuyên kéo VIEW và FOLLOW cho kênh mới (giai đoạn xây kênh, chưa bán hàng).
+        Nhiệm vụ: Biến ý tưởng "{idea}" thành kịch bản video mẹo vặt thuần giá trị, tối ưu để người xem LƯU lại và BẤM FOLLOW.
+
+        Quy tắc Chế độ GIÁ TRỊ (XÂY FOLLOW — KHÔNG BÁN HÀNG):
+        1. **KHÔNG bán hàng**, không nhắc sản phẩm/thương hiệu cụ thể, không CTA giỏ hàng.
+        2. Mẹo phải THỰC SỰ hữu ích, bất ngờ, làm theo được ngay. Không bịa, không phóng đại (tránh vi phạm chính sách misleading).
+        3. **Hook 2-3 giây đầu là quan trọng nhất**: dùng "pattern interrupt" — chỉ ra một lỗi sai hầu hết mọi người mắc, hoặc một kết quả bất ngờ ("99% mọi người cất hành tỏi sai cách...", "Đừng vứt vỏ chuối, vì...").
+        4. Thân bài: nói thẳng vào mẹo, từng bước rõ ràng, không lan man.
+        5. **Kết thúc bằng 1 câu chốt kéo tương tác**: ưu tiên kêu gọi LƯU video ("Lưu lại kẻo lúc cần không tìm thấy nha") hoặc gợi mở series để FOLLOW ("Theo dõi để xem mẹo bếp mỗi ngày", "Mai mình chỉ tiếp mẹo khử mùi tủ lạnh").
+        6. Độ dài lời thoại: đọc trong 15-22 giây (khoảng 45-70 từ). NGẮN luôn tốt hơn DÀI cho retention.
+
+        Cấu trúc: Hook gây sốc/lỗi sai -> Mẹo cụ thể từng bước -> Câu chốt kêu gọi Lưu/Follow.
+        Quy tắc: NGẮN, GẮT, THẤM, văn nói tự nhiên. CHỈ TRẢ VỀ lời thoại, không kèm mô tả cảnh quay hay timestamp.
         """
     else:
-        prompt = f"""Bạn là một Chuyên gia Tâm lý hành vi và Chiến lược gia TikTok triệu view. 
-        Nhiệm vụ: Biến ý tưởng "{idea}" thành kịch bản video thôi miên người xem và lồng ghép sản phẩm Affiliate.
-        
+        prompt = f"""Bạn là một Chuyên gia bán hàng Affiliate TikTok Shop ngách Đồ Gia Dụng & Nhà Bếp Thông Minh.
+        Nhiệm vụ: Biến ý tưởng "{idea}" thành kịch bản video 15-20 giây bán hàng qua giỏ hàng TikTok Shop.
+        Bối cảnh: video sẽ ghép với FOOTAGE THẬT quay sản phẩm bằng điện thoại (tay thao tác + sản phẩm, không lộ mặt), nên lời thoại phải bám sát thao tác demo được bằng tay.
+
         Quy tắc Chế độ AFFILIATE (BÁN HÀNG):
-        1. **80% Giá trị:** Nêu ra nỗi đau hoặc sự thật thú vị.
-        2. **20% Giải pháp:** Lồng ghép sản phẩm như một bí mật hoặc lối thoát duy nhất.
-        3. Hook phải là một "gáo nước lạnh" khiến người xem dừng lại.
-        4. CTA tinh tế ở cuối video.
-        
-        Cấu trúc: Hook -> Body giá trị -> Affiliate Close.
-        Quy tắc: NGẮN, GẮT, THẤM. CHỈ TRẢ VỀ lời thoại.
+        1. **Hook 2-3 giây:** nêu đúng MỘT nỗi đau cụ thể khi nấu ăn/dọn dẹp mà sản phẩm giải quyết.
+        2. **Thân 10-14 giây:** mô tả sản phẩm đang được demo giải quyết nỗi đau đó như thế nào. Chỉ nói công dụng THẬT, kiểm chứng được — TUYỆT ĐỐI không phóng đại hay bịa tính năng (vi phạm = đóng băng hoa hồng).
+        3. **CTA 2-3 giây cuối:** điều hướng giỏ hàng, ví dụ "Giỏ hàng góc trái màn hình nha".
+        4. Giọng văn tự nhiên như đang nói chuyện với bạn, không như đọc quảng cáo.
+        5. Tổng độ dài lời thoại: 50-70 từ (đọc trong 15-20 giây).
+
+        Cấu trúc: Hook nỗi đau -> Demo giải pháp -> CTA giỏ hàng.
+        Quy tắc: NGẮN, GẮT, THẤM. CHỈ TRẢ VỀ lời thoại, không kèm mô tả cảnh quay hay timestamp.
         """
     
     import urllib.request
@@ -319,12 +328,14 @@ def api_ideas_generate():
         return jsonify({"error": "Chưa cấu hình API Key"}), 400
         
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
-    prompt = """Bạn là một chuyên gia săn trend TikTok. Hãy đề xuất 5 ý tưởng video ngắn (dưới 60s) đang cực kỳ dễ viral. 
+    prompt = """Bạn là chuyên gia nội dung TikTok ngách Mẹo Vặt Nhà Bếp & Gia Đình tại Việt Nam, đang giúp một kênh MỚI xây follower (giai đoạn 1, chưa bán hàng).
+    Hãy đề xuất 5 ý tưởng video mẹo vặt ngắn (15-22s) cho kênh faceless (stock/AI visual + giọng đọc AI), tối ưu để kéo VIEW và FOLLOW.
     Yêu cầu:
-    1. Mỗi ý tưởng phải thuộc một ngách khác nhau (Sự thật bí ẩn, Triết lý phũ, Soft Life, Tech...).
-    2. Gợi ý luôn sản phẩm Affiliate phù hợp cho mỗi ý tưởng.
-    3. Định dạng trả về: Một danh sách các chuỗi ngắn gọn theo kiểu: "[Ngách] Ý tưởng... (Gợi ý bán: Sản phẩm X)"
-    4. CHỈ TRẢ VỀ JSON array: ["ý tưởng 1", "ý tưởng 2", ...]
+    1. TẤT CẢ là mẹo vặt thuần giá trị, KHÔNG bán hàng, không nhắc sản phẩm cụ thể.
+    2. Mỗi mẹo phải hữu ích bất ngờ, ai cũng làm được tại nhà, dễ khiến người xem muốn LƯU lại.
+    3. Mỗi ý tưởng nêu rõ HOOK gây tò mò ở câu đầu (chỉ ra lỗi sai phổ biến hoặc kết quả bất ngờ).
+    4. Định dạng: "[Mẹo bếp/Mẹo dọn dẹp/Mẹo bảo quản] Hook... -> nội dung mẹo ngắn".
+    5. CHỈ TRẢ VỀ JSON array: ["ý tưởng 1", "ý tưởng 2", ...]
     """
     
     import urllib.request
@@ -576,7 +587,6 @@ def run_pipeline(
     job_id: str,
     script_file: str,
     visual_mode: str,
-    video_mode: str,
     uploaded_images: list,
     music_mode: str,
     audio_cfg: AudioConfig,
@@ -686,7 +696,6 @@ def run_pipeline(
             image_dir=image_dir,
             visual_mode=visual_mode,
             uploaded_images=uploaded_images if not downloaded_bg_assets else downloaded_bg_assets,
-            video_mode=video_mode,
         )
 
         update_job_status(job_id, "completed", 100, f"✅ Hoàn tất! Video: {final_video}", output_file=final_video)
@@ -711,7 +720,6 @@ def api_pipeline_start():
     music_offset_sec = data.get("music_offset_sec", 0)
     music_volume = data.get("music_volume", 0.22)
     music_mode = data.get("music_mode", "manual")
-    video_mode = data.get("video_mode", "realistic")  # choices: realistic, veo
     script_file = data.get("script", "script.txt")
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     output_file = data.get("output", f"output/video_{timestamp}.mp4")
@@ -764,7 +772,6 @@ def api_pipeline_start():
         job_id,
         script_file,
         visual_mode,
-        video_mode,
         uploaded_images,
         music_mode,
         audio_cfg,
@@ -846,71 +853,25 @@ def serve_file(filepath):
 
 
 # ============================================================
-# AFFILIATE API (Nicks, Processing, Upload)
+# VIDEO LIBRARY API
 # ============================================================
 
-from core.automation import nick_manager
 from core.utils.logger_config import logger
-
-@app.route("/api/nicks", methods=["GET"])
-def api_nicks_get():
-    """Api nicks get."""
-    nicks = nick_manager.list_nicks()
-    return jsonify(nicks)
-
-@app.route("/api/nicks/add", methods=["POST"])
-def api_nicks_add():
-    """Api nicks add."""
-    data = request.json
-    try:
-        nick = nick_manager.add_nick(data.get("name"), data.get("username", ""), data.get("proxy", ""))
-        return jsonify({"success": True, "nick": nick})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/nicks/login", methods=["POST"])
-def api_nicks_login():
-    """Api nicks login."""
-    data = request.json
-    nick_name = data.get("name")
-    if not nick_name:
-        return jsonify({"error": "Thiếu tên nick"}), 400
-    
-    def run_login():
-        """Run login."""
-        try:
-            from core.automation import uploader
-            uploader.login_tiktok(nick_name)
-        except Exception as e:
-            logger.info(f"❌ Lỗi login: {e}")
-
-    threading.Thread(target=run_login, daemon=True).start()
-    return jsonify({"success": True, "message": "Đang mở trình duyệt..."})
-
-@app.route("/api/nicks/remove", methods=["POST"])
-def api_nicks_remove():
-    """Api nicks remove."""
-    data = request.json
-    try:
-        nick_manager.remove_nick(data.get("name"))
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/affiliate/videos", methods=["GET"])
 def api_affiliate_videos():
-    """Api affiliate videos."""
-    proc_dir = "processed"
+    """Danh sách video đã tạo trong output/."""
     out_dir = "output"
-    os.makedirs(proc_dir, exist_ok=True)
     os.makedirs(out_dir, exist_ok=True)
-    
-    files = glob.glob(os.path.join(proc_dir, "*.mp4")) + glob.glob(os.path.join(out_dir, "*.mp4"))
+
+    files = glob.glob(os.path.join(out_dir, "*.mp4"))
     res = []
     for f in sorted(files, key=os.path.getmtime, reverse=True):
+        cover = os.path.splitext(f)[0] + "_cover.jpg"
         res.append({
             "name": os.path.basename(f),
             "path": f,
+            "cover": os.path.relpath(cover) if os.path.exists(cover) else None,
             "size_mb": round(os.path.getsize(f) / 1024 / 1024, 1),
             "created": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(f)))
         })
@@ -918,36 +879,45 @@ def api_affiliate_videos():
 
 @app.route("/api/affiliate/videos", methods=["DELETE"])
 def api_affiliate_videos_delete():
-    """Api affiliate videos delete."""
+    """Xoá video trong output/ (kèm file _cover.jpg nếu có)."""
     data = request.json or {}
+
+    def _remove_with_cover(f):
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+        cover = os.path.splitext(f)[0] + "_cover.jpg"
+        if os.path.exists(cover):
+            try: os.remove(cover)
+            except Exception: pass
+
     if data.get("all"):
-        for folder in ["processed", "output"]:
-            if os.path.exists(folder):
-                for f in glob.glob(os.path.join(folder, "*.mp4")):
-                    try: os.remove(f)
-                    except Exception: pass
+        if os.path.exists("output"):
+            for f in glob.glob(os.path.join("output", "*.mp4")):
+                _remove_with_cover(f)
         return jsonify({"success": True, "message": "Đã xoá tất cả video"})
-    
+
     paths = data.get("paths", [])
     path = data.get("path")
     if path and path not in paths:
         paths.append(path)
-        
+
     if paths:
         for p in paths:
             if os.path.exists(p):
-                try: os.remove(p)
-                except Exception: pass
+                _remove_with_cover(p)
         return jsonify({"success": True})
-        
+
     return jsonify({"error": "Không có file nào được chọn"}), 400
 
 @app.route("/media/<folder>/<filename>")
 def serve_media(folder, filename):
     """Serve media."""
-    if folder not in ("processed", "output"):
+    if folder != "output":
         return jsonify({"error": "Thư mục không hợp lệ"}), 400
     return send_from_directory(folder, filename)
+
 @app.route("/api/background/fetch", methods=["POST"])
 def api_background_fetch():
     """Api background fetch."""
@@ -960,158 +930,6 @@ def api_background_fetch():
     bg_fetcher.start_download_thread(url)
     return jsonify({"success": True, "message": "Đang tải video nền..."})
 
-@app.route("/api/affiliate/process", methods=["POST"])
-def api_affiliate_process():
-    """Api affiliate process."""
-    global jobs_status
-    data = request.json
-    url = data.get("url")
-    file_path = data.get("file")
-    hook = data.get("hook")
-    cta = data.get("cta")
-    bg_music = data.get("bg_music")
-    job_id = str(uuid.uuid4())
-    
-    jobs_status[job_id] = {"running": True, "task": "process", "progress": 10, "message": "Đang chuẩn bị...", "error": None}
-
-    def run_proc(jid):
-        """Run proc."""
-        global jobs_status
-        jobs_status[jid]["message"] = "Đang tải video..." if url else "Đang xử lý..."
-        try:
-            from core.engines.video_processor import download_video, process_video, process_local_video
-            if url:
-                raw = download_video(url)
-                if not raw:
-                    raise Exception("Tải video thất bại")
-                jobs_status[jid]["message"] = "Đang áp dụng biến đổi (FFmpeg)..."
-                jobs_status[jid]["progress"] = 50
-                processed = process_video(raw, hook_text=hook, cta_text=cta, bg_music=bg_music)
-            elif file_path:
-                jobs_status[jid]["message"] = "Đang áp dụng biến đổi video local..."
-                jobs_status[jid]["progress"] = 50
-                processed = process_local_video(file_path, hook_text=hook, cta_text=cta, bg_music=bg_music)
-            else:
-                raise Exception("Thiếu URL hoặc File")
-
-            if not processed:
-                raise Exception("Xử lý video thất bại")
-
-            jobs_status[jid].update({"running": False, "progress": 100, "message": f"✅ Xử lý xong!"})
-        except Exception as e:
-            jobs_status[jid].update({"running": False, "progress": 0, "message": f"❌ Lỗi: {str(e)}", "error": str(e)})
-
-    threading.Thread(target=run_proc, args=(job_id,), daemon=True).start()
-    return jsonify({"success": True, "job_id": job_id, "message": "Bắt đầu xử lý..."})
-
-@app.route("/api/affiliate/upload", methods=["POST"])
-def api_affiliate_upload():
-    """Api affiliate upload."""
-    global jobs_status
-    data = request.json
-    video_path = data.get("video_path")
-    nick_name = data.get("nick_name")
-    title = data.get("title", "")
-    tags = data.get("tags", "")
-    job_id = str(uuid.uuid4())
-
-    jobs_status[job_id] = {"running": True, "task": "upload", "progress": 10, "message": f"Mở trình duyệt cho {nick_name}...", "error": None}
-
-    def run_up(jid):
-        """Run up."""
-        global jobs_status
-        try:
-            from core.automation.uploader import upload_video
-            jobs_status[jid]["progress"] = 30
-            success = upload_video(video_path, title, tags, nick_name)
-            if success:
-                from core.automation import nick_manager
-                nick_manager.record_upload(nick_name, success=True)
-                jobs_status[jid].update({"running": False, "progress": 100, "message": f"✅ Upload thành công cho {nick_name}!"})
-            else:
-                raise Exception("Upload thất bại. Có thể do popup bản quyền hoặc captcha.")
-        except Exception as e:
-            jobs_status[jid].update({"running": False, "progress": 0, "message": f"❌ Lỗi: {str(e)}", "error": str(e)})
-
-    threading.Thread(target=run_up, args=(job_id,), daemon=True).start()
-    return jsonify({"success": True, "job_id": job_id, "message": "Bắt đầu upload..."})
-
-@app.route("/api/jobs/status/<job_id>", methods=["GET"])
-def api_jobs_status(job_id):
-    """Api jobs status."""
-    if job_id not in jobs_status:
-        return jsonify({"error": "Job not found"}), 404
-    return jsonify(jobs_status[job_id])
-
-
-@app.route("/api/affiliate/upload_queue", methods=["POST"])
-def api_affiliate_upload_queue():
-    """Api affiliate upload queue."""
-    global jobs_status
-    data = request.json
-    jobs = data.get("jobs", [])
-    if not jobs:
-        return jsonify({"error": "Không có video nào trong hàng đợi!"}), 400
-        
-    job_id = str(uuid.uuid4())
-    jobs_status[job_id] = {"running": True, "task": "upload_queue", "progress": 10, "message": f"Bắt đầu hàng đợi ({len(jobs)} video)...", "error": None}
-
-    def run_queue(jid):
-        """Run queue."""
-        global jobs_status
-        try:
-            from core.automation.uploader import upload_queue
-            
-            # Theo dõi process trong khi upload queue chạy. Để đơn giản upload_queue() chạy đồng bộ.
-            results = upload_queue(jobs)
-            
-            # Ghi lại dữ liệu nick_manager
-            from core.automation import nick_manager
-            for success_job in results.get("success", []):
-                nick_manager.record_upload(success_job.get("nick_name"), success=True)
-            for failed_job in results.get("failed", []):
-                nick_manager.record_upload(failed_job.get("nick_name"), success=False)
-                
-            success_count = len(results.get("success", []))
-            jobs_status[jid].update({
-                "running": False, 
-                "progress": 100, 
-                "message": f"✅ Queue hoàn tất! Thành công {success_count}/{len(jobs)}"
-            })
-        except Exception as e:
-            jobs_status[jid].update({"running": False, "progress": 0, "message": f"❌ Lỗi queue: {str(e)}", "error": str(e)})
-
-    threading.Thread(target=run_queue, args=(job_id,), daemon=True).start()
-    return jsonify({"success": True, "job_id": job_id, "message": "Bắt đầu chạy upload queue..."})
-
-
-@app.route("/api/affiliate/schedule", methods=["POST"])
-def api_affiliate_schedule():
-    """Lưu queue vào data/queue.json để scheduler.py chạy vào giờ vàng"""
-    data = request.json
-    jobs = data.get("jobs", [])
-    if not jobs:
-        return jsonify({"error": "Không có video nào trong hàng đợi!"}), 400
-
-    queue_file = "data/queue.json"
-    os.makedirs("data", exist_ok=True)
-    
-    current_queue = []
-    if os.path.exists(queue_file):
-        try:
-            import json
-            with open(queue_file, "r", encoding="utf-8") as f:
-                current_queue = json.load(f)
-        except Exception:
-            pass
-            
-    current_queue.extend(jobs)
-    
-    import json
-    with open(queue_file, "w", encoding="utf-8") as f:
-        json.dump(current_queue, f, indent=4, ensure_ascii=False)
-        
-    return jsonify({"success": True, "message": f"Đã lên lịch {len(jobs)} video. Sẽ tự đăng vào giờ vàng!"})
 
 if __name__ == "__main__":
     os.makedirs("frontend/dist", exist_ok=True)
@@ -1120,9 +938,7 @@ if __name__ == "__main__":
     os.makedirs("backgrounds", exist_ok=True)
     os.makedirs("audio_bg", exist_ok=True)
     os.makedirs(UPLOADED_IMAGE_DIR, exist_ok=True)
-    os.makedirs("processed", exist_ok=True)
-    os.makedirs("profiles", exist_ok=True)
-    
+
     from core.data.jobs_db import init_db, clean_stuck_jobs
     init_db()
     clean_stuck_jobs()
@@ -1146,6 +962,6 @@ if __name__ == "__main__":
                 stderr=subprocess.DEVNULL
             )
         except Exception as e:
-            logger.info("⚠️ Lỗi khởi chạy frontend auto-build:", e)
+            logger.info(f"⚠️ Lỗi khởi chạy frontend auto-build: {e}")
 
     app.run(debug=True, host="0.0.0.0", port=5000)

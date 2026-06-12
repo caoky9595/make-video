@@ -417,20 +417,143 @@ def _build_words_json(word_boundaries: list) -> list:
     return words_data
 
 
+def _audio_duration(path: str) -> float:
+    """Đọc độ dài (giây) của file audio. Trả 0.0 nếu không đọc được."""
+    try:
+        from moviepy.editor import AudioFileClip
+        clip = AudioFileClip(path)
+        try:
+            return float(clip.duration or 0.0)
+        finally:
+            clip.close()
+    except Exception as e:
+        logger.info(f"  [TTS] ⚠️ Không đọc được độ dài audio {path}: {e}")
+        return 0.0
+
+
+def _rescale_timing(output_srt: str, scale: float):
+    """Nhân (rescale) toàn bộ timestamp trong SRT + words.json theo hệ số scale.
+
+    Dùng cho TikTok TTS: timing gốc lấy từ Edge-TTS (tốc độ đọc khác TikTok), rescale
+    để khớp đúng độ dài audio TikTok thật → phụ đề không bị lệch dồn về cuối video.
+    """
+    if scale <= 0 or abs(scale - 1.0) < 1e-3:
+        return
+
+    # words.json
+    words_json_path = output_srt.replace(".srt", "_words.json")
+    if os.path.exists(words_json_path):
+        try:
+            with open(words_json_path, "r", encoding="utf-8") as f:
+                words = json.load(f)
+            for w in words:
+                w["start"] = round(w.get("start", 0.0) * scale, 4)
+                w["end"] = round(w.get("end", 0.0) * scale, 4)
+            with open(words_json_path, "w", encoding="utf-8") as f:
+                json.dump(words, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.info(f"  [TTS] ⚠️ Không rescale được words.json: {e}")
+
+    # SRT (định dạng HH:MM:SS,mmm)
+    if os.path.exists(output_srt):
+        try:
+            import re
+
+            def _ts_to_sec(ts):
+                h, m, rest = ts.split(":")
+                s, ms = rest.split(",")
+                return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+
+            def _sec_to_ts(sec):
+                ms = int(round(sec * 1000))
+                h, ms = divmod(ms, 3600000)
+                m, ms = divmod(ms, 60000)
+                s, ms = divmod(ms, 1000)
+                return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+            with open(output_srt, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            def _repl(match):
+                a, b = match.group(1), match.group(2)
+                return f"{_sec_to_ts(_ts_to_sec(a) * scale)} --> {_sec_to_ts(_ts_to_sec(b) * scale)}"
+
+            content = re.sub(
+                r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})",
+                _repl, content,
+            )
+            with open(output_srt, "w", encoding="utf-8") as f:
+                f.write(content)
+        except Exception as e:
+            logger.info(f"  [TTS] ⚠️ Không rescale được SRT: {e}")
+
+
+def _build_timing_from_chunks(chunk_durations: list, output_srt: str):
+    """Dựng SRT + words.json từ độ dài audio TikTok thật của từng chunk.
+
+    Mỗi chunk thành 1 block phụ đề; thời lượng chunk chia cho các từ theo độ dài ký tự.
+    Vì timing lấy thẳng từ audio TikTok nên phụ đề khớp chính xác (kể cả chỗ ngắt nghỉ),
+    không lệch như khi mượn timing của Edge.
+    """
+    import re as _re
+
+    words_data = []
+    srt_lines = []
+    t = 0.0
+    idx = 1
+    for chunk_text, dur in chunk_durations:
+        dur = max(0.0, float(dur))
+        tokens = chunk_text.split()
+        if dur <= 0 or not tokens:
+            t += dur
+            continue
+
+        total_chars = sum(len(w) for w in tokens) or 1
+        block_start = t
+        wt = t
+        for w in tokens:
+            w_dur = dur * (len(w) / total_chars)
+            words_data.append({"text": w, "start": round(wt, 4), "end": round(wt + w_dur, 4)})
+            wt += w_dur
+        block_end = t + dur
+
+        srt_lines.append(str(idx))
+        srt_lines.append(f"{_seconds_to_srt_time(block_start)} --> {_seconds_to_srt_time(block_end)}")
+        srt_lines.append(chunk_text.strip())
+        srt_lines.append("")
+        idx += 1
+        t += dur
+
+    with open(output_srt, "w", encoding="utf-8") as f:
+        f.write("\n".join(srt_lines))
+
+    words_json_path = output_srt.replace(".srt", "_words.json")
+    with open(words_json_path, "w", encoding="utf-8") as f:
+        json.dump(words_data, f, ensure_ascii=False, indent=2)
+
+
 async def _generate_tiktok_api(text: str, output_audio: str, output_srt: str, rate: str, voice: str):
-    """Sinh audio bằng TikTok TTS, sau đó dùng Edge-TTS (silent) để lấy SRT (Trick)."""
+    """Sinh audio bằng TikTok TTS + phụ đề khớp đúng audio (theo độ dài từng chunk)."""
     from core.engines import tiktok_tts
     logger.info(f"  [TTS] Engine: TikTok TTS API")
-    
-    # 1. Sinh Audio từ TikTok
-    tiktok_tts.generate_tiktok_tts(text, voice, output_audio)
-    
-    # 2. Sinh SRT từ Edge-TTS (Chỉ lấy file .srt và word.json, bỏ qua audio)
-    # Vì TikTok TTS ko trả về timecodes (WordBoundaries)
+
+    # 1. Sinh audio TikTok, nhận về độ dài thật từng chunk
+    chunk_durations = tiktok_tts.generate_tiktok_tts(text, voice, output_audio)
+
+    # 2. Dựng phụ đề thẳng từ độ dài audio TikTok (chính xác nhất, không cần Edge)
+    if chunk_durations and sum(d for _, d in chunk_durations) > 0:
+        logger.info(f"  [TTS] Sync phụ đề theo {len(chunk_durations)} chunk audio TikTok thật.")
+        _build_timing_from_chunks(chunk_durations, output_srt)
+        return
+
+    # 3. Fallback: nếu không đo được chunk (vd lỗi đọc mp3) → mượn timing Edge rồi rescale
+    logger.info("  [TTS] Không đo được chunk, fallback Edge timing + rescale.")
     temp_audio = output_audio.replace(".mp3", "_temp.mp3")
     await _generate_edge_tts(text, temp_audio, output_srt, rate, "hoaimy")
-    
-    # Xoá audio rác của Edge
+    real_dur = _audio_duration(output_audio)
+    edge_dur = _audio_duration(temp_audio)
+    if real_dur > 0 and edge_dur > 0:
+        _rescale_timing(output_srt, real_dur / edge_dur)
     if os.path.exists(temp_audio):
         os.remove(temp_audio)
 

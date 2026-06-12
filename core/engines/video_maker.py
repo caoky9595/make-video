@@ -53,6 +53,145 @@ OVERLAY_OPACITY = 0.35
 BGM_VOLUME = 0.22
 
 
+# ============================================================
+# CHỌN ENCODER (ưu tiên tăng tốc bằng iGPU Intel QuickSync nếu có)
+# ============================================================
+_ENCODER_CACHE = None
+
+
+def _select_video_encoder():
+    """Chọn (ffmpeg_exe, pre_input_args, post_input_args) tốt nhất theo từng máy.
+
+    Encode bằng GPU/iGPU để nhanh và nhẹ CPU. Vì nhiều encoder được ffmpeg liệt kê
+    nhưng init runtime lại lỗi (vd h264_qsv trên một số máy), ta PROBE THẬT bằng cách
+    encode thử 1 frame chứ không tin danh sách -encoders. Chọn ứng viên theo hệ điều hành:
+
+      - macOS:   VideoToolbox (GPU Apple)
+      - Linux:   VAAPI (iGPU Intel/AMD) > QuickSync (Intel) > NVENC (NVIDIA)
+      - Windows: NVENC (NVIDIA) > QuickSync (Intel) > AMF (AMD)
+
+    Không có cái nào chạy được thì fallback libx264 (CPU) trên ffmpeg bundled của imageio.
+    Kết quả cache để khỏi probe lại mỗi lần render.
+
+    pre_input_args đặt TRƯỚC -i (vd khởi tạo vaapi_device), post_input_args đặt SAU input
+    (filter hwupload + codec).
+    """
+    global _ENCODER_CACHE
+    if _ENCODER_CACHE is not None:
+        return _ENCODER_CACHE
+
+    import os as _os
+    import glob
+    import shutil
+    import tempfile
+    import subprocess
+
+    sys_ffmpeg = shutil.which("ffmpeg")
+    system = platform.system()
+    probe_out = _os.path.join(tempfile.gettempdir(), "_enc_probe.mp4")
+
+    def _probe(exe, pre, post):
+        """Encode thử 1 frame testsrc; True nếu ra file hợp lệ."""
+        if not exe:
+            return False
+        try:
+            if _os.path.exists(probe_out):
+                _os.remove(probe_out)
+        except OSError:
+            pass
+        cmd = [exe, "-hide_banner", "-y", *pre,
+               "-f", "lavfi", "-i", f"testsrc=size={VIDEO_WIDTH}x{VIDEO_HEIGHT}:rate={FPS}:duration=1",
+               *post, probe_out]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=20)
+            return _os.path.exists(probe_out) and _os.path.getsize(probe_out) > 0
+        except Exception:
+            return False
+
+    # Danh sách ứng viên (label, pre_input, post_input) theo hệ điều hành
+    candidates = []
+    if system == "Darwin":
+        candidates.append((
+            "VideoToolbox (GPU Apple)", [],
+            ["-c:v", "h264_videotoolbox", "-b:v", "8M", "-pix_fmt", "yuv420p"],
+        ))
+    elif system == "Windows":
+        candidates += [
+            ("NVENC (NVIDIA)", [], ["-c:v", "h264_nvenc", "-preset", "fast", "-pix_fmt", "yuv420p"]),
+            ("QuickSync (Intel)", [], ["-c:v", "h264_qsv", "-global_quality", "24"]),
+            ("AMF (AMD)", [], ["-c:v", "h264_amf", "-quality", "balanced", "-pix_fmt", "yuv420p"]),
+        ]
+    else:  # Linux và các hệ Unix khác
+        render_nodes = sorted(glob.glob("/dev/dri/renderD*"))
+        render_dev = render_nodes[0] if render_nodes else "/dev/dri/renderD128"
+        candidates += [
+            ("VAAPI (iGPU Intel/AMD)", ["-vaapi_device", render_dev],
+             ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"]),
+            ("QuickSync (Intel)", [], ["-c:v", "h264_qsv", "-global_quality", "24"]),
+            ("NVENC (NVIDIA)", [], ["-c:v", "h264_nvenc", "-preset", "fast", "-pix_fmt", "yuv420p"]),
+        ]
+
+    for label, pre, post in candidates:
+        if sys_ffmpeg and _probe(sys_ffmpeg, pre, post):
+            logger.info(f"  [Encoder] Dùng {label} - encode bằng GPU.")
+            _ENCODER_CACHE = (sys_ffmpeg, pre, post)
+            return _ENCODER_CACHE
+
+    # Fallback: libx264 (CPU) trên ffmpeg bundled của imageio
+    import imageio_ffmpeg
+    bundled = imageio_ffmpeg.get_ffmpeg_exe()
+    logger.info("  [Encoder] Không có HW encoder khả dụng, dùng libx264 (CPU).")
+    _ENCODER_CACHE = (bundled, [], ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"])
+    return _ENCODER_CACHE
+
+
+def _mix_audio_with_ducking(voice_path, bgm_path, out_path, duration, bgm_start_sec, bgm_volume):
+    """Trộn giọng + nhạc nền với DUCKING (nhạc tự hạ xuống khi có giọng) bằng ffmpeg sidechaincompress.
+
+    Trả True nếu tạo được file out_path hợp lệ, False nếu lỗi (để caller fallback sang mix thường).
+    """
+    import shutil
+    import subprocess
+
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        try:
+            import imageio_ffmpeg
+            ff = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return False
+
+    start = max(0.0, float(bgm_start_sec or 0.0))
+    vol = max(0.0, min(1.0, float(bgm_volume)))
+    bg_filter = f"volume={vol}"
+    if start > 0:
+        bg_filter = f"atrim=start={start},asetpts=PTS-STARTPTS,{bg_filter}"
+
+    # [1]=nhạc (loop để phủ đủ duration) hạ volume → sidechaincompress dùng [0]=giọng làm tín hiệu
+    # ép nhạc hạ xuống mỗi khi có giọng, rồi amix giọng (full) với nhạc đã ducking.
+    filter_complex = (
+        f"[1:a]{bg_filter}[bg];"
+        f"[bg][0:a]sidechaincompress=threshold=0.02:ratio=8:attack=5:release=300[duck];"
+        f"[0:a][duck]amix=inputs=2:duration=first:normalize=0[mix]"
+    )
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    cmd = [
+        ff, "-hide_banner", "-y",
+        "-i", voice_path,
+        "-stream_loop", "-1", "-i", bgm_path,
+        "-filter_complex", filter_complex,
+        "-map", "[mix]", "-t", str(duration), "-ar", "44100",
+        out_path,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=180)
+        return os.path.exists(out_path) and os.path.getsize(out_path) > 0
+    except Exception:
+        return False
+
+
 def _get_font(size: int = FONT_SIZE):
     """Tìm font phù hợp tùy theo hệ điều hành (Cross-platform) và trả về ImageFont."""
     system = platform.system()
@@ -563,7 +702,6 @@ def make_video(
     bgm_volume: float = BGM_VOLUME,
     visual_mode: str = "pexels",
     uploaded_images=None,
-    video_mode: str = "realistic",
 ):
     """
     Hàm chính: Ghép audio + video nền + subtitle thành video TikTok hoàn chỉnh.
@@ -579,31 +717,36 @@ def make_video(
     
     # MIX AUDIO BACKGROUND (BGM)
     bgm_mix_clip = None
+    ducked_audio_path = None  # nếu set: file đã trộn sẵn (ducking) dùng thẳng cho render
     bgm_volume = max(0.0, min(1.0, float(bgm_volume)))
     if bgm_path and os.path.exists(bgm_path):
         logger.info(f"  [Audio] Mixing BGM: {os.path.basename(bgm_path)}")
-        try:
-            bgm_clip = AudioFileClip(bgm_path)
-            bgm_start_sec = max(0.0, float(bgm_start_sec or 0.0))
-            if bgm_start_sec >= bgm_clip.duration:
-                logger.info("  [Audio] ⚠️ BGM start vượt độ dài file, reset về 0s")
-                bgm_start_sec = 0.0
 
-            bgm_mix_clip = bgm_clip.subclip(bgm_start_sec, bgm_clip.duration)
-            if bgm_mix_clip.duration <= 0.05:
-                bgm_mix_clip = bgm_clip
+        # Ưu tiên: ducking bằng ffmpeg (nhạc tự hạ xuống khi có giọng → giọng nổi rõ)
+        candidate = output_path.replace(".mp4", "_ducked.mp3")
+        if _mix_audio_with_ducking(audio_path, bgm_path, candidate, duration, bgm_start_sec, bgm_volume):
+            ducked_audio_path = candidate
+            logger.info(f"  [Audio] ✅ BGM ducking (sidechain) - volume {bgm_volume:.2f}, nhạc tự né giọng.")
+        else:
+            # Fallback: mix thường bằng moviepy (volume cố định)
+            logger.info("  [Audio] ⚠️ Ducking thất bại, dùng mix thường (moviepy).")
+            try:
+                bgm_clip = AudioFileClip(bgm_path)
+                bgm_start_sec = max(0.0, float(bgm_start_sec or 0.0))
+                if bgm_start_sec >= bgm_clip.duration:
+                    logger.info("  [Audio] ⚠️ BGM start vượt độ dài file, reset về 0s")
+                    bgm_start_sec = 0.0
 
-            # Loop segment nhạc nếu ngắn hơn giọng đọc, rồi cắt vừa duration.
-            bgm_mix_clip = afx.audio_loop(bgm_mix_clip, duration=duration)
-            bgm_mix_clip = bgm_mix_clip.subclip(0, duration)
+                bgm_mix_clip = bgm_clip.subclip(bgm_start_sec, bgm_clip.duration)
+                if bgm_mix_clip.duration <= 0.05:
+                    bgm_mix_clip = bgm_clip
 
-            # Keep BGM audible while still behind voice.
-            bgm_mix_clip = bgm_mix_clip.volumex(bgm_volume)
-            logger.info(f"  [Audio] BGM volume: {bgm_volume:.2f}")
-
-            audio = CompositeAudioClip([bgm_mix_clip, audio])
-        except Exception as e:
-            logger.info(f"  [Audio] ⚠️ Failed to mix BGM: {e}")
+                bgm_mix_clip = afx.audio_loop(bgm_mix_clip, duration=duration)
+                bgm_mix_clip = bgm_mix_clip.subclip(0, duration)
+                bgm_mix_clip = bgm_mix_clip.volumex(bgm_volume)
+                audio = CompositeAudioClip([bgm_mix_clip, audio])
+            except Exception as e:
+                logger.info(f"  [Audio] ⚠️ Failed to mix BGM: {e}")
 
     # 2. Chuẩn bị video nền (Multi-Scene)
     visual_sources = _collect_visual_sources(
@@ -615,12 +758,7 @@ def make_video(
     # List theo dõi các visual assets thực tế sử dụng để lưu vết
     actually_used_assets = []
 
-    if video_mode == "veo":
-        # Veo mode vẫn dùng 1 file duy nhất do giá thành cao
-        bg_path = os.path.join(bg_dir, "veo_generated.mp4")
-        bg_clip = _prepare_visual_background(bg_path, duration)
-        actually_used_assets = [bg_path]
-    elif not visual_sources:
+    if not visual_sources:
         bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(30, 30, 30), duration=duration)
     else:
         # LOGIC MULTI-SCENE: Chia nhỏ thời lượng theo subtitle
@@ -741,41 +879,44 @@ def make_video(
                 break
         
         bg_frame = get_frame(t).astype(np.float32)
-        # Phủ overlay tối
+        # Phủ overlay tối (in-place, tránh cấp phát mảng mới mỗi frame)
         bg_frame *= (1.0 - OVERLAY_OPACITY)
-        
-        # Subtitle Overlay
-        sub_data = None
+
+        # Subtitle Overlay (blend in-place: bg*inv_alpha + rgb_alpha)
         if active_sub_idx != -1:
-            sub_data = get_text_frame(active_sub_idx, active_word_idx)
-                
-        if sub_data is not None:
-            rgb_alpha, inv_alpha = sub_data
-            bg_frame = bg_frame * inv_alpha + rgb_alpha
-            
-        return bg_frame.clip(0, 255).astype(np.uint8)
+            rgb_alpha, inv_alpha = get_text_frame(active_sub_idx, active_word_idx)
+            bg_frame *= inv_alpha
+            bg_frame += rgb_alpha
+
+        np.clip(bg_frame, 0, 255, out=bg_frame)
+        return bg_frame.astype(np.uint8)
 
     # 6. Render ra file bằng FFmpeg Pipe (Chống tràn RAM)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
-    logger.info(f"\n  [Audio] Đang trộn âm thanh nền và giọng đọc...")
+    logger.info(f"\n  [Audio] Đang chuẩn bị âm thanh cho render...")
     temp_audio_path = output_path.replace(".mp4", "_temp_audio.mp3")
-    try:
-        audio.write_audiofile(temp_audio_path, fps=44100, logger=None)
-    except Exception as e:
-        logger.info(f"  [Audio] ⚠️ Lỗi xuất âm thanh: {e}")
-        # Fallback to pure audio_path if mix fails
-        temp_audio_path = audio_path
+    if ducked_audio_path and os.path.exists(ducked_audio_path):
+        # Đã trộn sẵn (ducking) ở bước trên, dùng thẳng.
+        temp_audio_path = ducked_audio_path
+    else:
+        try:
+            audio.write_audiofile(temp_audio_path, fps=44100, logger=None)
+        except Exception as e:
+            logger.info(f"  [Audio] ⚠️ Lỗi xuất âm thanh: {e}")
+            # Fallback to pure audio_path if mix fails
+            temp_audio_path = audio_path
         
     logger.info(f"  [Render] Bắt đầu stream frames trực tiếp tới FFmpeg (Siêu nhẹ, RAM < 200MB)...")
     import subprocess
-    
-    # Tìm đường dẫn ffmpeg đi kèm với imageio (moviepy) thay vì dùng lệnh toàn cục
-    import imageio_ffmpeg
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    
+
+    # Chọn encoder tốt nhất khả dụng (iGPU VAAPI/QSV nếu chạy được, không thì libx264 CPU)
+    ffmpeg_exe, pre_input_args, post_input_args = _select_video_encoder()
+
     ffmpeg_cmd = [
         ffmpeg_exe, "-y",
+        *pre_input_args,
+        "-thread_queue_size", "64",
         "-f", "rawvideo",
         "-vcodec", "rawvideo",
         "-s", f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}",
@@ -783,9 +924,7 @@ def make_video(
         "-r", str(FPS),
         "-i", "-",          # stdin pipe
         "-i", temp_audio_path,  # Audio file
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-pix_fmt", "yuv420p",
+        *post_input_args,
         "-c:a", "aac",
         "-b:a", "192k",
         "-shortest",
@@ -811,12 +950,12 @@ def make_video(
             # Ghi vào pipe của FFmpeg
             process.stdin.write(frame_data.tobytes())
             
-            # Hiển thị tiến độ mỗi 10 frame
-            if frame_idx % 10 == 0:
+            # Hiển thị tiến độ mỗi giây (FPS frame)
+            if total_frames and frame_idx % FPS == 0:
                 percent = (frame_idx / total_frames) * 100
-                logger.info(f"  [Render] Đang ghép khung hình: {frame_idx}/{total_frames} ({percent:.1f}%)", end="\r")
-                
-        logger.info(f"\n  [Render] Đã nạp xong {total_frames} frames. Đang chờ FFmpeg hoàn thiện file...")
+                logger.info(f"  [Render] Đang ghép khung hình: {frame_idx}/{total_frames} ({percent:.1f}%)")
+
+        logger.info(f"  [Render] Đã nạp xong {total_frames} frames. Đang chờ FFmpeg hoàn thiện file...")
     except Exception as e:
         logger.info(f"\n  [Render] ⚠️ Lỗi trong quá trình bơm frame: {e}")
     finally:

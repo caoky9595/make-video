@@ -7,11 +7,7 @@ interface SidebarProps {
 
 const NAV_ITEMS = [
   { id: 'dashboard', icon: 'space_dashboard', label: 'Bảng điều khiển', color: '#9333ea' },
-  { id: 'editor', icon: 'movie_edit', label: 'Meme Studio', color: '#3b82f6' },
-  { id: 'factory', icon: 'factory', label: 'Content Factory', color: '#4f46e5' },
-  { id: 'nicks', icon: 'group', label: 'Quản lý Tài khoản', color: '#10b981' },
-  { id: 'uploader', icon: 'rocket', label: 'Auto Uploader', color: '#f59e0b' },
-  { id: 'settings', icon: 'settings', label: 'Cấu hình', color: '#64748b' }
+  { id: 'editor', icon: 'movie_edit', label: 'Studio Mẹo Vặt', color: '#3b82f6' },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ activePage, setActivePage }) => {

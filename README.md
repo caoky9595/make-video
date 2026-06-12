@@ -1,113 +1,99 @@
-# 🎬 VideoMaker Pro - AI Video Creator & Affiliate Automation
-> **The ultimate command center for TikTok Creators and Affiliate Marketers.**
+# 🎬 VideoMaker — Tạo video TikTok faceless tự động
 
-VideoMaker Pro is a high-performance, automated video production suite integrated with a premium web dashboard. It combines cutting-edge AI (Gemini 1.5 Pro) for script generation with a robust automation pipeline for multi-account management, stealth browsing, and scheduled content distribution.
+Công cụ tạo video dọc 1080x1920 cho TikTok từ kịch bản: AI sinh kịch bản → giọng đọc AI → tự tìm video nền → render phụ đề động.
 
----
+**Định hướng kênh:** ngách Mẹo Vặt Nhà Bếp & Gia Đình, faceless, xây follower rồi làm affiliate TikTok Shop. Chi tiết: [channel_strategy.md](channel_strategy.md), [RULES.md](RULES.md), [docs/PLAN_2026.md](docs/PLAN_2026.md).
 
-## ✨ Key Features
-
-### 🎨 Premium Meme Studio (Creation Mode)
-- **Triple-Column Workspace:** Script Editor, Asset Management, and Live Preview all on one screen.
-- **AI Brain (Gemini 1.5 Pro):** Generate viral-ready scripts from simple ideas in seconds.
-- **Dynamic Asset Library:** Seamlessly mix local uploads with Pexels stock footage.
-- **Advanced Audio Engine:** Support for background music mixing, voice-over (TTS) synchronization, and volume normalization.
-- **Video Library:** Premium grid view to manage, preview, and batch-delete your creations.
-
-### 🛡️ Stealth Browser & Affiliate Pipeline (Automation Mode)
-- **CloakBrowser Integration:** Native support for CloakBrowser binaries to bypass TikTok's bot detection and automation checks.
-- **Multi-Account Management:** Isolated Chrome profiles with per-account proxy support and fingerprint spoofing.
-- **Content Factory:** Automatic "Freshness" processing—re-render existing videos with new music/TTS to evade copyright strikes.
-- **Auto Uploader & Scheduler:**
-    - **Intelligent Queue:** Multi-threaded uploading with automatic retries and detailed logs.
-    - **Golden Hour Scheduler:** Set your uploads for peak engagement times (11h-13h, 18h-21h).
-    - **Showcase Integration:** Automatic product tagging via Product IDs.
-- **Health Check & Account Warming:** Automated browsing scripts to build account trust.
+> Không có chức năng tự động upload — đăng thủ công để an toàn với chính sách TikTok (xem RULES.md).
 
 ---
 
-## 🚀 Getting Started
+## ✨ Tính năng
 
-### 1. Installation
+- **AI sinh kịch bản (Gemini):** 2 chế độ — Mẹo vặt (kéo view/follow) và Affiliate (bán hàng, giai đoạn sau).
+- **Giọng đọc AI:** TikTok TTS giọng Việt (tự nhiên, hợp viral), dự phòng FPT.AI / Edge-TTS.
+- **Phụ đề động:** highlight theo từng từ (word-level), 5 style (Ali / Marker / MrBeast / Typewriter / Affiliate).
+- **Video nền tự động:** Pexels hoặc ảnh AI (Pollinations), tự ghép nhiều clip, không lặp lại.
+- **Render tăng tốc bằng iGPU:** tự dùng VAAPI/QuickSync nếu máy hỗ trợ, fallback libx264.
+- **Web dashboard:** React + Vite, editor kịch bản + thư viện video + preview.
+
+---
+
+## 🚀 Cài đặt & chạy
+
 ```bash
-# Clone the repository
-git clone https://github.com/your-repo/videomaker-pro.git
-cd videomaker-pro
-
-# Set up virtual environment
-python -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# Configure environment variables
-cp .env.example .env  # Add your GEMINI_API_KEY and FPT_AI_API_KEY
+# Cấu hình .env:
+#   GEMINI_API_KEY=...            (sinh kịch bản)
+#   TIKTOK_SESSION_ID=...         (giọng TikTok TTS — lấy từ cookie sessionid khi đăng nhập tiktok.com)
+#   PEXELS_API_KEY=...            (video nền)
+
+# Web app:
+python app.py            # → http://localhost:5000
+
+# Hoặc CLI:
+python main.py --script script.txt --voice tiktok_nu_1
 ```
 
-### 2. Launch the Web Dashboard
+### Lấy TIKTOK_SESSION_ID
+Đăng nhập tiktok.com trên trình duyệt → F12 (DevTools) → Application → Cookies → copy giá trị `sessionid` → dán vào `.env`.
+
+---
+
+## 🎬 Cách làm một video (giai đoạn 1: mẹo vặt, faceless)
+
+> Bạn KHÔNG cần tự quay hay tự tìm video nền. Hệ thống tự lo: Gemini đọc kịch bản → rút từ khóa → tải clip nền miễn phí bản quyền từ Pexels (tự ghép nhiều clip cho đủ độ dài), hoặc sinh ảnh AI (Pollinations). Vì video mẹo vặt không gắn giỏ hàng nên dùng nền stock là hợp lệ và an toàn chính sách.
+
+### Bằng giao diện web
+1. `python app.py` → mở http://localhost:5000 → vào **Studio Mẹo Vặt**.
+2. Gõ ý tưởng (vd "mẹo bảo quản hành lá") → bấm AI sinh kịch bản (Gemini viết theo công thức hook → mẹo → kêu gọi lưu). Hoặc tự gõ kịch bản.
+3. Chọn giọng (mặc định **TikTok Nữ**), phong cách phụ đề (**MrBeast** — chữ to, viền đậm, highlight vàng).
+4. Bấm **Bắt đầu sản xuất** → chờ ~20-30 giây.
+5. Video hiện ở thư viện (Bảng điều khiển) → xem trước / tải về.
+
+### Bằng dòng lệnh
 ```bash
-# Start the main application
-python app.py
-
-# Optional: Start the Scheduler for Golden Hour uploads
-python scheduler.py
-
-# → Open http://localhost:5000 in your browser
+python main.py --script script.txt --voice tiktok_nu_1
+# → file trong output/
 ```
 
+### Sau khi có video — đăng TikTok thủ công
+Hệ thống cố tình KHÔNG tự upload (an toàn chính sách). Tải video về rồi tự đăng, nhớ:
+1. **Bật nhãn "Nội dung do AI tạo"** (vì dùng giọng AI) — bật rồi không bị bóp reach.
+2. **Gắn nhạc đang trend ngay trong app TikTok** lúc đăng (nhạc nền trong video chỉ là nền nhỏ; trending sound mới giúp lên xu hướng).
+3. **Caption + hashtag:** câu gợi tò mò + `#meovat #meobep #nhabep #xuhuong #fyp`.
+
+### Nhịp đăng
+1-2 video/ngày, khung giờ 11-13h hoặc 18-21h. Hook 2 giây đầu là quyết định. Kênh mới cần khối lượng để thuật toán tìm ra video trúng — đừng nản với 10-20 video đầu. Chi tiết chiến lược: [channel_strategy.md](channel_strategy.md).
+
 ---
 
-## 🎙️ Supported AI Voices (Premium Engines)
+## 🎙️ Giọng đọc
 
-| Engine | Gender | Accent | Highlights |
-|---|---|---|---|
-| **Edge-TTS** | Male/Female | North | High-quality, Free |
-| **FPT.AI** | Male/Female | North/Central/South | Pro-grade, Natural |
+| Engine | Giọng | Ghi chú |
+|---|---|---|
+| **TikTok TTS** | tiktok_nu_1, tiktok_nam_1 | Giọng Việt tự nhiên, hợp viral — cần `TIKTOK_SESSION_ID` |
+| **FPT.AI** | banmai… | Giọng Việt tự nhiên, dự phòng tốt |
+| **Edge-TTS** | hoaimy, namminh | Miễn phí không cần cấu hình, dùng dự phòng |
 
 ---
 
-## 🛠️ CLI Power Tools
-For advanced users, VideoMaker Pro offers a robust CLI interface:
+## 📁 Kiến trúc
 
-```bash
-# Manage Accounts
-python main.py nick login test_nick     # Initialize a new stealth session
-python main.py nick list                # View status of all satellite accounts
-
-# Process Content
-python main.py process --url 'https://...'      # Download & Clean a video
-python main.py process --file v.mp4 --bg-music music.mp3 # Manual re-render
-
-# Account Maintenance
-python health_check.py                  # Run automated warm-up routines
 ```
-
----
-
-## 📁 Project Architecture
+app.py                  # Web server + API
+main.py                 # CLI tạo video từ kịch bản
+core/
+├── engines/
+│   ├── tts.py          # TTS đa engine + sinh SRT/word-timing
+│   ├── tiktok_tts.py   # TikTok TTS (giọng Việt)
+│   ├── video_maker.py  # Render engine (PIL + FFmpeg, HW encode)
+│   ├── bg_finder.py    # Tìm video nền Pexels theo nội dung
+│   ├── ai_visuals.py   # Sinh ảnh AI (Pollinations)
+│   └── music_finder.py # Chọn nhạc nền
+├── data/               # Models + SQLite jobs
+└── utils/              # Logger
+frontend/               # React + Vite SPA
 ```
-play/
-├── app.py              # Main Web Server & API Gateway
-├── main.py             # CLI Controller for Automation
-├── cloakbrowser.py     # CloakBrowser detection & initialization module
-├── tts.py              # Multi-engine Text-to-Speech logic
-├── video_maker.py      # Core Studio rendering engine (FFmpeg)
-├── uploader.py         # Stealth Automation via CloakBrowser + DrissionPage
-├── scheduler.py        # Background Golden Hour daemon
-├── webapp/             # Premium SPA (HTML5, Vanilla JS, TailwindCSS)
-├── profiles/           # Isolated stealth browser session data
-├── data/               # Persistent storage for accounts and queues
-└── logs/               # Operation logs and upload history
-```
-
----
-
-## ⚠️ Important Notes
-- **CloakBrowser:** Ensure CloakBrowser is installed in your Applications folder for maximum stealth. The system will fall back to standard Chrome if not found.
-- **Automation Safety:** The system includes a **Random Delay** mechanism and human-like interaction patterns. Do not disable these if you want to keep your accounts safe.
-- **Monitoring:** Check `logs/upload_history.log` for detailed success/failure reports of your automated uploads.
-
----
-*Built with ❤️ for the next generation of Content Creators.*
-
