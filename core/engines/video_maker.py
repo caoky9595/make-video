@@ -18,6 +18,7 @@ import re
 import random
 import platform
 import json
+import subprocess
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from core.utils.logger_config import logger
@@ -190,6 +191,42 @@ def _mix_audio_with_ducking(voice_path, bgm_path, out_path, duration, bgm_start_
         return os.path.exists(out_path) and os.path.getsize(out_path) > 0
     except Exception:
         return False
+
+
+def open_ffmpeg_with_log(ffmpeg_cmd, output_path):
+    """Mở tiến trình FFmpeg, stderr ghi ra file log (pipe trực tiếp dễ deadlock vì
+    FFmpeg in progress liên tục). Trả về (process, log_path)."""
+    log_path = output_path + ".ffmpeg.log"
+    log_file = open(log_path, "wb")
+    process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log_file)
+    # Gắn file handle vào process để check_ffmpeg_result đóng được
+    process._log_file = log_file
+    return process, log_path
+
+
+def check_ffmpeg_result(process, output_path, log_path):
+    """Raise RuntimeError nếu FFmpeg fail hoặc file output rỗng. Xoá log nếu OK."""
+    log_file = getattr(process, "_log_file", None)
+    if log_file:
+        try: log_file.close()
+        except OSError: pass
+
+    failed = process.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0
+    if failed:
+        tail = ""
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                tail = f.read()[-2000:]
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"FFmpeg thất bại (code {process.returncode}), file output "
+            f"{'rỗng/thiếu' if process.returncode == 0 else 'lỗi'}: {output_path}\n--- FFmpeg log ---\n{tail}"
+        )
+    try:
+        os.remove(log_path)
+    except OSError:
+        pass
 
 
 def _get_font(size: int = FONT_SIZE):
@@ -419,14 +456,16 @@ def _collect_visual_sources(
     image_ext = (".jpg", ".jpeg", ".png", ".webp")
 
     videos = []
-    images = []
+    bg_images = []  # Các ảnh AI sinh tự động lưu trong bg_dir
+    images = []     # Các ảnh upload lưu trong image_dir
 
     if os.path.isdir(bg_dir):
-        videos = [
-            os.path.join(bg_dir, f)
-            for f in os.listdir(bg_dir)
-            if f.lower().endswith(video_ext)
-        ]
+        for f in os.listdir(bg_dir):
+            path = os.path.join(bg_dir, f)
+            if f.lower().endswith(video_ext):
+                videos.append(path)
+            elif f.lower().endswith(image_ext):
+                bg_images.append(path)
 
     if os.path.isdir(image_dir):
         images = [
@@ -442,8 +481,9 @@ def _collect_visual_sources(
     if visual_mode == "uploaded":
         return images
     if visual_mode == "mix":
-        return videos + images
-    return videos
+        return videos + bg_images + images
+    # Đối với mode pexels, trả về cả video pexels và các ảnh AI được tải tự động nằm trong bg_dir
+    return videos + bg_images
 
 
 def _prepare_image_background(image_path: str, duration: float):
@@ -702,6 +742,7 @@ def make_video(
     bgm_volume: float = BGM_VOLUME,
     visual_mode: str = "pexels",
     uploaded_images=None,
+    progress_callback=None,
 ):
     """
     Hàm chính: Ghép audio + video nền + subtitle thành video TikTok hoàn chỉnh.
@@ -931,8 +972,8 @@ def make_video(
         output_path
     ]
     
-    # Mở tiến trình FFmpeg ẩn output để đỡ rác console
-    process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    # stderr ghi ra log file — đọc lại khi fail thay vì nuốt lỗi âm thầm
+    process, ffmpeg_log = open_ffmpeg_with_log(ffmpeg_cmd, output_path)
     
     def safe_get_frame(t_val):
         # Tránh lỗi index out of bounds của moviepy
@@ -954,13 +995,18 @@ def make_video(
             if total_frames and frame_idx % FPS == 0:
                 percent = (frame_idx / total_frames) * 100
                 logger.info(f"  [Render] Đang ghép khung hình: {frame_idx}/{total_frames} ({percent:.1f}%)")
+                if progress_callback:
+                    progress_callback(50 + percent * 0.45, f"Đang render video... {percent:.1f}%")
 
         logger.info(f"  [Render] Đã nạp xong {total_frames} frames. Đang chờ FFmpeg hoàn thiện file...")
     except Exception as e:
         logger.info(f"\n  [Render] ⚠️ Lỗi trong quá trình bơm frame: {e}")
+        raise e
     finally:
         process.stdin.close()
         process.wait()
+
+    check_ffmpeg_result(process, output_path, ffmpeg_log)
 
     # Dọn dẹp rác (Garbage Collection)
     if os.path.exists(temp_audio_path) and temp_audio_path != audio_path:

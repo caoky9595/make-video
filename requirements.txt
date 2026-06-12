@@ -11,3 +11,6 @@ flask-cors
 
 # Tải video nền từ YouTube (bg_fetcher)
 yt-dlp
+
+# Browser automation (lấy TikTok session tự động)
+playwright

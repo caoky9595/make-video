@@ -38,3 +38,18 @@
 - **[Error]**: `Exception: TikTok TTS API trả về HTTP code 504 ở đoạn 1: upstream failed to respond`
 - **[Root Cause]**: Máy chủ API của TikTok (api16-normal-v6.tiktokv.com) thỉnh thoảng bị quá tải hoặc mạng chập chờn, trả về lỗi Gateway Timeout (504) hoặc Bad Gateway (502). Code hiện tại không có cơ chế thử lại (retry) nên toàn bộ pipeline tạo video bị chết oan uổng.
 - **[Fix Strategy]**: Bọc request `requests.post()` bằng một vòng lặp `for attempt in range(max_retries)`. Nếu nhận được `response.status_code >= 500` hoặc bắt được Exception, tạm dừng bằng `time.sleep()` với cơ chế Exponential Backoff rồi thử lại tối đa 3 lần trước khi bỏ cuộc.
+
+### Lỗi Không cập nhật tức thì số lượng/dung lượng trên dashboard sau khi xoá video
+- **[Error]**: Khi xoá video, danh sách video được cập nhật đúng nhưng tổng số lượng và dung lượng trên dashboard vẫn giữ nguyên giá trị cũ, chỉ khi reload trang mới đổi.
+- **[Root Cause]**: Mặc dù frontend đã gọi hàm `refreshStats()` ngay sau khi xoá video thành công, trình duyệt lại trả về kết quả lưu trong cache (HTTP Cache) cho các request `GET /api/stats` thay vì gửi request mới lên server. Do đó server không được thực hiện tính toán lại dung lượng và số lượng.
+- **[Fix Strategy]**: Thêm cơ chế cache-buster vào hàm `api.get()` bằng cách tự động append một tham số ngẫu nhiên `_=${Date.now()}` vào cuối URL. Trình duyệt nhận diện đây là một URL hoàn toàn mới và luôn gửi request trực tiếp đến backend, giải quyết dứt điểm vấn đề không đồng bộ.
+
+### Cơ chế Dừng Tạo Video Chạy Nền (Job Stop/Cancellation)
+- **[Error]**: Người dùng không thể dừng hoặc hủy tiến trình kết xuất video đang chạy ngầm, dẫn đến việc lãng phí tài nguyên hệ thống (CPU/RAM/GPU) khi muốn sửa lại kịch bản.
+- **[Root Cause]**: Pipeline render chạy trong các ThreadPool độc lập và không có cơ chế giao tiếp hoặc biến trạng thái để nhận diện yêu cầu ngắt giữa chừng.
+- **[Fix Strategy]**: 
+  1. Sử dụng một tập hợp toàn cục (`cancelled_jobs = set()`) để theo dõi các job bị hủy.
+  2. Tạo endpoint `/api/pipeline/stop` để thêm `job_id` của tiến trình vào tập hợp này.
+  3. Định nghĩa callback tiến độ (`progress_callback`) trong cả engine render truyền thống (MoviePy) và engine nâng cao (GSAP) để kiểm tra `job_id in cancelled_jobs`. Nếu job bị hủy, ném ra ngoại lệ (`raise Exception`) nhằm ngắt tiến trình render frame ngay lập tức.
+  4. Bắt ngoại lệ và dọn dẹp tài nguyên (tiến trình Playwright, FFmpeg, các tệp âm thanh/hình ảnh tạm thời) một cách an toàn trong khối `finally`.
+  5. Cập nhật giao diện để hiển thị nút "HỦY TẠO VIDEO" khi `pipelineStatus.running` là `true`.

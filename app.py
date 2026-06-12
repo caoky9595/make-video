@@ -30,6 +30,8 @@ from core.data.jobs_db import init_db, create_job, update_job_status, get_job, g
 
 init_db()
 executor = ThreadPoolExecutor(max_workers=2)
+cancelled_jobs = set()
+active_jobs = set()  # job_id của các pipeline đang chạy — dùng để tránh dọn tài nguyên job khác đang dùng
 
 app = Flask(__name__, static_folder="frontend/dist", static_url_path="")
 CORS(app)
@@ -41,15 +43,15 @@ STUDIO_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
 MUSIC_DIR = "audio_bg"
 MUSIC_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm")
 QUOTA_FILE = "temp/quota_stats.json"
+_quota_lock = threading.Lock()  # 2 request song song không được mất lượt đếm
 
-def get_ai_usage():
-    """Lấy số lượt đã dùng AI trong ngày và hạn mức."""
+def _read_ai_usage_unlocked():
     today = time.strftime("%Y-%m-%d")
     default_limit = 10 # Mặc định 10 lượt
     os.makedirs("temp", exist_ok=True)
     if not os.path.exists(QUOTA_FILE):
         return {"date": today, "used": 0, "limit": default_limit}
-    
+
     try:
         with open(QUOTA_FILE, "r") as f:
             data = json.load(f)
@@ -62,21 +64,28 @@ def get_ai_usage():
     except Exception:
         return {"date": today, "used": 0, "limit": default_limit}
 
+def get_ai_usage():
+    """Lấy số lượt đã dùng AI trong ngày và hạn mức."""
+    with _quota_lock:
+        return _read_ai_usage_unlocked()
+
 def update_ai_limit(limit):
     """Cập nhật hạn mức AI tối đa."""
-    data = get_ai_usage()
-    data["limit"] = int(limit)
-    with open(QUOTA_FILE, "w") as f:
-        json.dump(data, f)
-    return data
+    with _quota_lock:
+        data = _read_ai_usage_unlocked()
+        data["limit"] = int(limit)
+        with open(QUOTA_FILE, "w") as f:
+            json.dump(data, f)
+        return data
 
 def increment_ai_usage():
-    """Tăng số lượt đã dùng AI."""
-    data = get_ai_usage()
-    data["used"] += 1
-    with open(QUOTA_FILE, "w") as f:
-        json.dump(data, f)
-    return data["used"]
+    """Tăng số lượt đã dùng AI (read-modify-write nguyên tử)."""
+    with _quota_lock:
+        data = _read_ai_usage_unlocked()
+        data["used"] += 1
+        with open(QUOTA_FILE, "w") as f:
+            json.dump(data, f)
+        return data["used"]
 
 # Trạng thái pipeline
 pipeline_status = {
@@ -230,7 +239,7 @@ def api_tts_preview():
     data = request.json
     text = data.get("text", "Xin chào, đây là giọng đọc mẫu.")
     voice = data.get("voice", "hoaimy")
-    rate = data.get("rate", "+20%")
+    rate = data.get("rate", "+50%")
 
     # Tạo file preview tạm
     os.makedirs("temp", exist_ok=True)
@@ -250,10 +259,12 @@ def api_tts_preview():
 
 @app.route("/api/script/save", methods=["POST"])
 def api_script_save():
-    """Lưu kịch bản vào file."""
+    """Lưu kịch bản vào file (chỉ cho phép file .txt ngay trong thư mục project)."""
     data = request.json
     text = data.get("text", "")
-    filename = data.get("filename", "script.txt")
+    filename = os.path.basename(data.get("filename", "script.txt"))
+    if not filename.endswith(".txt"):
+        return jsonify({"error": "Chỉ cho phép lưu file .txt"}), 400
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(text)
@@ -353,8 +364,10 @@ def api_ideas_generate():
 
 @app.route("/api/script/load", methods=["GET"])
 def api_script_load():
-    """Đọc nội dung kịch bản hiện tại."""
-    filename = request.args.get("filename", "script.txt")
+    """Đọc nội dung kịch bản hiện tại (chỉ file .txt trong thư mục project)."""
+    filename = os.path.basename(request.args.get("filename", "script.txt"))
+    if not filename.endswith(".txt"):
+        return jsonify({"error": "Chỉ cho phép đọc file .txt"}), 400
     if os.path.exists(filename):
         with open(filename, "r", encoding="utf-8") as f:
             text = f.read()
@@ -555,17 +568,21 @@ def api_outputs_delete():
 
     deleted = []
     for name in filenames:
-        video_path = os.path.join("output", name)
+        # basename + chỉ .mp4 — chặn xoá file ngoài output/ qua "../"
+        safe_name = os.path.basename(str(name))
+        if not safe_name.lower().endswith(".mp4"):
+            continue
+        video_path = os.path.join("output", safe_name)
         cover_path = video_path.rsplit(".", 1)[0] + "_cover.jpg"
-        
+
         try:
             if os.path.exists(video_path):
                 os.remove(video_path)
             if os.path.exists(cover_path):
                 os.remove(cover_path)
-            deleted.append(name)
+            deleted.append(safe_name)
         except Exception as e:
-            logger.info(f"Error deleting {name}: {e}")
+            logger.info(f"Error deleting {safe_name}: {e}")
 
     return jsonify({"success": True, "deleted": deleted})
 
@@ -592,18 +609,29 @@ def run_pipeline(
     audio_cfg: AudioConfig,
     sub_cfg: SubtitleConfig,
     render_cfg: RenderConfig,
-    output_file: str
+    output_file: str,
+    engine: str = "moviepy"
 ):
     """Tiến trình tạo video chạy nền."""
     update_job_status(job_id, "processing", 10, "Đang tạo giọng đọc...")
-    
+
+    # Mỗi job có thư mục temp riêng — 2 job chạy song song không ghi đè file của nhau
+    job_temp = os.path.join("temp", job_id)
+    active_jobs.add(job_id)
+
     try:
+        if job_id in cancelled_jobs:
+            raise Exception("Job cancelled by user")
+
+        os.makedirs(job_temp, exist_ok=True)
+        os.makedirs("output", exist_ok=True)
+
         # Nếu script_file chứa nội dung kịch bản (không phải tên file)
         if len(script_file) > 50 or not script_file.endswith('.txt'):
             script_text = script_file
-            with open("temp/script.txt", "w", encoding="utf-8") as f:
+            script_path = os.path.join(job_temp, "script.txt")
+            with open(script_path, "w", encoding="utf-8") as f:
                 f.write(script_text)
-            script_path = "temp/script.txt"
         else:
             script_path = script_file
             if os.path.exists(script_path):
@@ -612,28 +640,29 @@ def run_pipeline(
             else:
                 script_text = ""
 
+        if job_id in cancelled_jobs:
+            raise Exception("Job cancelled by user")
+
         # Bước 1: TTS
         from core.engines.tts import run_tts
-        audio_path = "temp/audio.mp3"
-        srt_path = "temp/subtitles.srt"
-        os.makedirs("temp", exist_ok=True)
-        os.makedirs("output", exist_ok=True)
+        audio_path = os.path.join(job_temp, "audio.mp3")
+        srt_path = os.path.join(job_temp, "subtitles.srt")
 
         run_tts(script_path, audio_path, srt_path, rate=audio_cfg.rate, voice=audio_cfg.voice)
         update_job_status(job_id, "processing", 30, "Đang chuẩn bị video nền...")
 
+        if job_id in cancelled_jobs:
+            raise Exception("Job cancelled by user")
+
         # Bước 2: Chuẩn bị tài nguyên hình ảnh/video bằng AI Visual Engine
-        bg_dir = "backgrounds"
+        # Background tải về thư mục riêng của job — không đụng job khác, tự dọn khi xong
+        bg_dir = os.path.join(job_temp, "backgrounds")
         image_dir = UPLOADED_IMAGE_DIR
         os.makedirs(bg_dir, exist_ok=True)
         os.makedirs(image_dir, exist_ok=True)
 
-        # Nâng cấp: Xóa tài nguyên cũ để đảm bảo video luôn mới
-        if os.path.exists(bg_dir):
-            for f in os.listdir(bg_dir):
-                if f.startswith("ai_image_") or f.startswith("pexels_") or f.startswith("pixabay_"):
-                    try: os.remove(os.path.join(bg_dir, f))
-                    except Exception: pass
+        if job_id in cancelled_jobs:
+            raise Exception("Job cancelled by user")
 
         from core.engines.bg_finder import find_and_download_background
         update_job_status(job_id, "processing", 30, "Đang tự vẽ bối cảnh bằng AI...")
@@ -653,14 +682,14 @@ def run_pipeline(
         update_job_status(job_id, "processing", 50, "Đang render video...")
 
         # Bước 3: Render
-        from core.engines.video_maker import make_video
         bgm_dir = MUSIC_DIR
         os.makedirs(bgm_dir, exist_ok=True)
-        # Dọn dẹp các nhạc nền tải tự động cũ (có tiền tố auto_)
-        for f in os.listdir(bgm_dir):
-            if f.startswith("auto_"):
-                try: os.remove(os.path.join(bgm_dir, f))
-                except Exception: pass
+        # Dọn nhạc auto_ cũ — chỉ khi không có job nào khác đang chạy (tránh xoá nhạc job kia đang dùng)
+        if len(active_jobs) <= 1:
+            for f in os.listdir(bgm_dir):
+                if f.startswith("auto_"):
+                    try: os.remove(os.path.join(bgm_dir, f))
+                    except Exception: pass
         bgm_files = [f for f in os.listdir(bgm_dir) if f.lower().endswith(MUSIC_EXTENSIONS)]
         bgm_path = None
 
@@ -683,27 +712,70 @@ def run_pipeline(
         else:
             update_job_status(job_id, "processing", 50, "Đang render video... (không có BGM)")
 
-        final_video = make_video(
-            audio_path=audio_path,
-            srt_path=srt_path,
-            bg_dir=bg_dir,
-            output_path=output_file,
-            style=sub_cfg.style,
-            position=sub_cfg.position,
-            bgm_path=bgm_path,
-            bgm_start_sec=audio_cfg.bgm_start_sec,
-            bgm_volume=audio_cfg.bgm_volume,
-            image_dir=image_dir,
-            visual_mode=visual_mode,
-            uploaded_images=uploaded_images if not downloaded_bg_assets else downloaded_bg_assets,
-        )
+        def progress_cb(pct, msg):
+            if job_id in cancelled_jobs:
+                raise Exception("Job cancelled by user")
+            update_job_status(job_id, "processing", pct, msg)
 
+        if engine == "gsap":
+            from core.engines.html_video_maker import make_video_gsap
+            final_video = make_video_gsap(
+                audio_path=audio_path,
+                srt_path=srt_path,
+                bg_dir=bg_dir,
+                output_path=output_file,
+                style=sub_cfg.style,
+                position=sub_cfg.position,
+                bgm_path=bgm_path,
+                bgm_start_sec=audio_cfg.bgm_start_sec,
+                bgm_volume=audio_cfg.bgm_volume,
+                image_dir=image_dir,
+                visual_mode=visual_mode,
+                uploaded_images=uploaded_images if not downloaded_bg_assets else downloaded_bg_assets,
+                progress_callback=progress_cb
+            )
+        else:
+            from core.engines.video_maker import make_video
+            final_video = make_video(
+                audio_path=audio_path,
+                srt_path=srt_path,
+                bg_dir=bg_dir,
+                output_path=output_file,
+                style=sub_cfg.style,
+                position=sub_cfg.position,
+                bgm_path=bgm_path,
+                bgm_start_sec=audio_cfg.bgm_start_sec,
+                bgm_volume=audio_cfg.bgm_volume,
+                image_dir=image_dir,
+                visual_mode=visual_mode,
+                uploaded_images=uploaded_images if not downloaded_bg_assets else downloaded_bg_assets,
+                progress_callback=progress_cb
+            )
+
+        if job_id in cancelled_jobs:
+            raise Exception("Job cancelled by user")
         update_job_status(job_id, "completed", 100, f"✅ Hoàn tất! Video: {final_video}", output_file=final_video)
+        try: cancelled_jobs.remove(job_id)
+        except KeyError: pass
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        update_job_status(job_id, "failed", 0, f"❌ Lỗi: {str(e)}", error=str(e))
+        if job_id in cancelled_jobs:
+            update_job_status(job_id, "failed", 0, "❌ Đã dừng tạo video theo yêu cầu.", error="Cancelled by user")
+            try: cancelled_jobs.remove(job_id)
+            except KeyError: pass
+        else:
+            update_job_status(job_id, "failed", 0, f"❌ Lỗi: {str(e)}", error=str(e))
+    finally:
+        active_jobs.discard(job_id)
+        # Dọn toàn bộ temp riêng của job (script, audio, srt, backgrounds đã tải)
+        import shutil
+        if os.path.isdir(job_temp):
+            try:
+                shutil.rmtree(job_temp)
+            except OSError as e:
+                logger.info(f"⚠️ Không dọn được {job_temp}: {e}")
 
 
 @app.route("/api/pipeline/start", methods=["POST"])
@@ -711,7 +783,7 @@ def api_pipeline_start():
     """Bắt đầu pipeline tạo video (chạy nền)."""
     data = request.json or {}
     voice = data.get("voice", "vi-VN-HoaiMyNeural")
-    rate = data.get("rate", "+0%")
+    rate = data.get("rate", "+50%")
     style = data.get("style", 1)
     position = data.get("position", "bottom")
     visual_mode = data.get("visual_mode", "pexels")
@@ -722,7 +794,8 @@ def api_pipeline_start():
     music_mode = data.get("music_mode", "manual")
     script_file = data.get("script", "script.txt")
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    output_file = data.get("output", f"output/video_{timestamp}.mp4")
+    # Thêm hậu tố ngẫu nhiên để 2 job start cùng giây không ghi đè file nhau
+    output_file = data.get("output", f"output/video_{timestamp}_{uuid.uuid4().hex[:6]}.mp4")
 
     if visual_mode not in ("pexels", "mix", "uploaded", "ai"):
         visual_mode = "pexels"
@@ -763,6 +836,10 @@ def api_pipeline_start():
     )
     render_cfg = RenderConfig()
 
+    engine = data.get("engine", "moviepy")
+    if engine not in ("moviepy", "gsap"):
+        engine = "moviepy"
+
     job_id = str(uuid.uuid4())
     create_job(job_id, "queued", "Đang chờ...")
 
@@ -777,10 +854,27 @@ def api_pipeline_start():
         audio_cfg,
         sub_cfg,
         render_cfg,
-        output_file
+        output_file,
+        engine
     )
 
     return jsonify({"success": True, "job_id": job_id, "message": "Pipeline đã bắt đầu chạy nền!"})
+
+
+@app.route("/api/pipeline/stop", methods=["POST"])
+@app.route("/api/pipeline/stop/<job_id>", methods=["POST"])
+def api_pipeline_stop(job_id=None):
+    """Dừng một job đang tạo video."""
+    if not job_id:
+        job = get_latest_job()
+        if not job or job.get("status") not in ("queued", "processing"):
+            return jsonify({"error": "Không có tiến trình nào đang chạy"}), 400
+        job_id = job.get("job_id")
+
+    cancelled_jobs.add(job_id)
+    # Cập nhật ngay lập tức trạng thái trong database
+    update_job_status(job_id, "failed", 0, "❌ Đã yêu cầu dừng tạo video...", error="Cancelled by user")
+    return jsonify({"success": True, "message": f"Đã dừng tiến trình {job_id}"})
 
 
 @app.route("/api/pipeline/status", methods=["GET"])
@@ -846,9 +940,13 @@ def api_quota_update():
 
 @app.route("/api/file/<path:filepath>")
 def serve_file(filepath):
-    """Serve bất kỳ file nào từ project."""
-    if os.path.exists(filepath):
-        return send_file(filepath)
+    """Serve file media — chỉ cho phép trong output/ và temp/ (chặn đọc .env, db...)."""
+    allowed_dirs = [os.path.abspath("output"), os.path.abspath("temp")]
+    abspath = os.path.abspath(filepath)
+    if not any(abspath.startswith(d + os.sep) or abspath == d for d in allowed_dirs):
+        return jsonify({"error": "Đường dẫn không hợp lệ"}), 403
+    if os.path.isfile(abspath):
+        return send_file(abspath)
     return jsonify({"error": "File not found"}), 404
 
 
@@ -904,9 +1002,16 @@ def api_affiliate_videos_delete():
         paths.append(path)
 
     if paths:
+        output_root = os.path.abspath("output")
         for p in paths:
-            if os.path.exists(p):
-                _remove_with_cover(p)
+            # Chỉ cho phép xoá .mp4 nằm trong output/ — chặn traversal
+            abspath = os.path.abspath(str(p))
+            if not abspath.startswith(output_root + os.sep):
+                continue
+            if not abspath.lower().endswith(".mp4"):
+                continue
+            if os.path.exists(abspath):
+                _remove_with_cover(abspath)
         return jsonify({"success": True})
 
     return jsonify({"error": "Không có file nào được chọn"}), 400

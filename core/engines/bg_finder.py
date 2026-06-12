@@ -31,69 +31,180 @@ FALLBACK_KEYWORDS = [
     "minimalist clean background",
 ]
 
+def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 2, initial_delay: float = 1.0) -> dict:
+    """Gọi Gemini API bằng urllib với cơ chế retry nhanh."""
+    import urllib.request
+    import urllib.error
+    import json
+    import time
+    
+    delay = initial_delay
+    last_err = None
+    
+    for attempt in range(max_retries):
+        req = urllib.request.Request(
+            url, 
+            data=json.dumps(payload).encode("utf-8"), 
+            headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 429:
+                logger.warning(f"  [Gemini API] Rate limit (429) during keyword gen. Retrying in {delay}s...")
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise e
+        except Exception as e:
+            last_err = e
+            time.sleep(delay)
+            delay *= 2
+            continue
+            
+    if last_err:
+        raise last_err
+    raise RuntimeError("Không thể kết nối tới Gemini API")
+
+
+def extract_fallback_keywords_locally(script_text: str) -> list:
+    """Phân tích kịch bản bằng tiếng Việt bằng luật heuristic để trả về từ khóa tiếng Anh phù hợp khi Gemini lỗi."""
+    text_lower = script_text.lower()
+    
+    # 1. Nhóm Ẩm thực / Nhà bếp / Mẹo nấu ăn
+    cooking_keywords = [
+        "hành", "tỏi", "ớt", "rau", "nấu", "bếp", "thịt", "cá", "món", "ăn", "ngon", 
+        "gia vị", "chảo", "nồi", "nướng", "chiên", "xào", "luộc", "hấp", "tủ lạnh",
+        "thái nhỏ", "bảo quản", "ẩm thực", "ăn uống", "dưa", "cà", "muối", "canh"
+    ]
+    if any(kw in text_lower for kw in cooking_keywords):
+        return [
+            "cooking aesthetic vertical",
+            "fresh vegetables kitchen vertical",
+            "chopping vegetables vertical",
+            "chef cooking close up vertical",
+            "pouring food plate vertical"
+        ]
+        
+    # 2. Nhóm Kinh doanh / Tài chính / Kiếm tiền / Affiliate
+    business_keywords = [
+        "kinh doanh", "tiền", "giàu", "bán", "mua", "khách", "doanh số", "doanh thu",
+        "triệu phú", "tỷ phú", "đầu tư", "tài chính", "kiếm tiền", "sự nghiệp", "thành công",
+        "marketing", "affiliate", "sản phẩm", "đơn hàng", "tài sản", "tiết kiệm"
+    ]
+    if any(kw in text_lower for kw in business_keywords):
+        return [
+            "luxury workspace setup vertical",
+            "typing on mechanical keyboard aesthetic vertical",
+            "cinematic city lights night timelapse vertical",
+            "business meeting office vertical",
+            "stacks of dollars cash vertical"
+        ]
+        
+    # 3. Nhóm Kể chuyện / Tâm sự / ASMR / Satisfying
+    lofi_asmr_keywords = [
+        "kể chuyện", "tâm sự", "ngày xưa", "cuộc sống", "bình yên", "hạnh phúc", "gia đình",
+        "tình yêu", "nỗi buồn", "chia sẻ", "bài học", "triết lý", "tâm lý", "suy ngẫm",
+        "thư giãn", "ngủ ngon", "lắng nghe", "chữa lành"
+    ]
+    if any(kw in text_lower for kw in lofi_asmr_keywords):
+        return [
+            "oddly satisfying kinetic sand cutting vertical",
+            "satisfying ASMR cleaning vertical",
+            "soap slicing vertical",
+            "rainy window cozy lofi desk vertical",
+            "moody warm desk lamp aesthetic vertical"
+        ]
+        
+    # 4. Mặc định nếu không khớp nhóm nào cụ thể
+    return [
+        "cinematic landscape 4k vertical",
+        "minimalist clean background vertical",
+        "abstract colorful motion vertical"
+    ]
+
+
 def generate_visual_keywords_with_gemini(script_text):
-    """Sử dụng Gemini để phân tích kịch bản và sinh từ khóa Pexels theo 3 ngách thịnh hành."""
+    """Sử dụng Gemini để phân tích kịch bản và sinh từ khóa Pexels/Pollinations phù hợp với chủ đề thực tế."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return ["cinematic background"]
+        return extract_fallback_keywords_locally(script_text)
         
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
     prompt = f"""Bạn là một chuyên gia thiết kế hình ảnh TikTok triệu view.
-    Hãy phân tích kịch bản sau đây và tự động xếp nó vào 1 trong 3 nhóm (niche) sau:
-    1. STORYTELLING ASMR: Kịch bản kể chuyện đời sống, tâm sự. Từ khóa đề xuất phải là video ASMR cuốn hút mắt (ví dụ: 'oddly satisfying kinetic sand cutting vertical', 'satisfying ASMR cleaning vertical', 'soap slicing vertical').
-    2. LOFI PHILOSOPHY/STOIC: Kịch bản về triết lý, sự thật tâm lý học. Từ khóa phải có chiều sâu, lofi, hoài cổ (ví dụ: 'ancient greek statue dynamic shadow vertical', 'moody warm desk lamp aesthetic vertical', 'rainy window cozy lofi desk vertical').
-    3. BUSINESS & MOTIVATION: Kịch bản về tiền bạc, thành công, affiliate. Từ khóa phải sang trọng, tạo động lực (ví dụ: 'luxury workspace setup vertical', 'typing on mechanical keyboard aesthetic vertical', 'cinematic city lights night timelapse vertical').
-
+    Hãy phân tích kịch bản dưới đây và đề xuất 5 cụm từ tìm kiếm video/hình ảnh (bằng tiếng Anh) chi tiết, mang tính thẩm mỹ cao.
+    
+    Hướng dẫn phân loại & định cách thẩm mỹ:
+    1. Nếu kịch bản là KỂ CHUYỆN ĐỜI SỐNG, TÂM SỰ: Từ khóa đề xuất phải là video ASMR cuốn hút mắt (ví dụ: 'oddly satisfying kinetic sand cutting vertical', 'satisfying ASMR cleaning vertical', 'soap slicing vertical').
+    2. Nếu kịch bản về TRIẾT LÝ, TÂM LÝ HỌC: Từ khóa có chiều sâu, lofi, hoài cổ (ví dụ: 'ancient greek statue dynamic shadow vertical', 'moody warm desk lamp aesthetic vertical', 'rainy window cozy lofi desk vertical').
+    3. Nếu kịch bản về TIỀN BẠC, THÀNH CÔNG, AFFILIATE: Từ khóa sang trọng, tạo động lực (ví dụ: 'luxury workspace setup vertical', 'typing on mechanical keyboard aesthetic vertical', 'cinematic city lights night timelapse vertical').
+    4. Nếu kịch bản về MẸO VẶT CUỘC SỐNG, NẤU ĂN, GIA ĐÌNH, ĐỒ CHƠI (hoặc các chủ đề thực tế khác): Từ khóa phải cực kỳ sát với chủ đề thực tế trong kịch bản (ví dụ: mẹo hành lá -> 'fresh green onions kitchen vertical', 'aesthetic healthy cooking vertical', 'chopping vegetables close up vertical').
+    
     Yêu cầu:
-    - Đề xuất 5 cụm từ tìm kiếm video (bằng tiếng Anh) chi tiết, mang tính thẩm mỹ cao.
     - Luôn thêm từ khóa phụ trợ như 'vertical' hoặc 'portrait' vào từ khóa để tìm video dọc.
     - Trả về kết quả dưới dạng JSON array duy nhất: ["keyword1", "keyword2", ...]
 
     Kịch bản: {script_text[:1200]}
     """
     
-    import urllib.request
     import json
     payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"response_mime_type": "application/json"}}
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
     
     try:
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            content = result["candidates"][0]["content"]["parts"][0]["text"]
-            keywords = json.loads(content)
-            return keywords if isinstance(keywords, list) else ["cinematic background"]
+        result = call_gemini_with_retry(url, payload, max_retries=2, initial_delay=1.0)
+        content = result["candidates"][0]["content"]["parts"][0]["text"]
+        keywords = json.loads(content)
+        return keywords if isinstance(keywords, list) else extract_fallback_keywords_locally(script_text)
     except Exception as e:
-        logger.info(f"  [AI Keywords] Error: {e}")
-        return ["cinematic background"]
+        logger.info(f"  [AI Keywords] Error: {e}. Falling back to smart local keywords.")
+        return extract_fallback_keywords_locally(script_text)
 
 def download_ai_image(prompt, output_dir="backgrounds"):
     """Tạo và tải ảnh AI từ Pollinations.ai (Miễn phí, không giới hạn)."""
     os.makedirs(output_dir, exist_ok=True)
     import random
     import urllib.parse
+    import time
     
     # Làm cho prompt đa dạng và sang trọng hơn cho Affiliate
     seed = random.randint(1, 999999)
     # Thêm các modifier để ảnh trông "đắt tiền" và "sạch sẽ" hơn
     aesthetic_modifiers = "high-end photography, soft lighting, minimalist, clean composition, 8k resolution, cinematic color grading, vertical 9:16"
     safe_prompt = urllib.parse.quote(f"{prompt}, {aesthetic_modifiers}")
-    url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1080&height=1920&seed={seed}&nologo=true"
+    # Bỏ tham số width/height lớn để tránh lỗi 402 Payment Required từ Pollinations.ai
+    url = f"https://image.pollinations.ai/prompt/{safe_prompt}?seed={seed}&nologo=true"
     
     filename = f"ai_image_{seed}.jpg"
     filepath = os.path.join(output_dir, filename)
     
     logger.info(f"  [AI Image] Generating: {filename} for '{prompt}'...")
-    try:
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        with open(filepath, "wb") as f:
-            f.write(resp.content)
-        logger.info(f"  [AI Image] ✅ Saved: {filename}")
-        return filepath
-    except Exception as e:
-        logger.info(f"  [AI Image] Error: {e}")
-        return None
+    
+    # Cơ chế retry nếu gặp rate limit/queue full (HTTP 402)
+    max_retries = 3
+    delay = 2.0
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 402:
+                logger.warning(f"  [AI Image] IP queue full (402). Retrying in {delay}s...")
+                time.sleep(delay)
+                delay *= 2
+                continue
+            resp.raise_for_status()
+            with open(filepath, "wb") as f:
+                f.write(resp.content)
+            logger.info(f"  [AI Image] ✅ Saved: {filename}")
+            return filepath
+        except Exception as e:
+            if attempt == max_retries - 1:
+                logger.info(f"  [AI Image] Error: {e}")
+                return None
+            logger.warning(f"  [AI Image] Request failed ({e}). Retrying in {delay}s...")
+            time.sleep(delay)
+            delay *= 2
+    return None
 
 
 def get_api_key():

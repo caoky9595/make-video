@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--position", default="bottom", choices=["center", "bottom"])
     parser.add_argument("--bg-dir", default="backgrounds")
     parser.add_argument("--bgm-dir", default="audio_bg")
-    parser.add_argument("--rate", default="+20%")
+    parser.add_argument("--rate", default="+50%")
     parser.add_argument("--voice", default="tiktok_nu_1", help="tiktok_nu_1/tiktok_nam_1 (cần TIKTOK_SESSION_ID), banmai (FPT), hoaimy/namminh (Edge dự phòng)")
     parser.add_argument("--no-auto-bg", action="store_true", help="Không tự tìm video nền trên Pexels")
 

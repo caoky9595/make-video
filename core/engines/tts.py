@@ -69,15 +69,13 @@ def get_engine(voice: str) -> str:
         return "edge"
     elif v_lower in FPT_VOICES:
         return "fpt"
-    elif v_lower in TIKTOK_VOICES:
-        return "tiktok"
-    elif v_lower.startswith("tiktok_"):
+    elif v_lower in TIKTOK_VOICES or v_lower.startswith("tiktok_"):
         return "tiktok"
     else:
         raise ValueError(
             f"Giọng '{voice}' không hợp lệ. Các giọng có sẵn:\n"
-            f"  Edge-TTS: {', '.join(EDGE_VOICES.keys())}\n"
-            f"  FPT.AI:   {', '.join(FPT_VOICES.keys())}"
+            f"  FPT.AI:   {', '.join(FPT_VOICES.keys())}\n"
+            f"  TikTok:   {', '.join(TIKTOK_VOICES.keys())}"
         )
 
 
@@ -85,10 +83,6 @@ def list_voices():
     """In danh sách tất cả giọng đọc có sẵn."""
     logger.info("\n📢 DANH SÁCH GIỌNG ĐỌC CÓ SẴN:")
     logger.info("=" * 60)
-    logger.info("\n🔷 Edge-TTS (miễn phí, không giới hạn):")
-    for key, voice_id in EDGE_VOICES.items():
-        gender = "Nữ" if "HoaiMy" in voice_id else "Nam"
-        logger.info(f"   • {key:12s} → {gender} | {voice_id}")
 
     logger.info("\n🔶 FPT.AI (miễn phí 100k ký tự/tháng, giọng rất tự nhiên):")
     for key, info in FPT_VOICES.items():
@@ -140,8 +134,10 @@ def parse_script(raw_text: str) -> str:
     # Xóa các chú thích trong ngoặc vuông → giữ nội dung bên trong
     clean_text = re.sub(r'\[([^\]]*)\]', r'\1', clean_text)
     
-    # Xóa khoảng trắng thừa (bao gồm cả xuống dòng dư thừa)
-    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+    # Xóa khoảng trắng thừa ngang (giữ nguyên ngắt dòng \n để tạo khoảng ngắt nghỉ tự nhiên)
+    clean_text = re.sub(r'[ \t\r\f\v]+', ' ', clean_text)
+    clean_text = re.sub(r'\n\s*\n+', '\n\n', clean_text)
+    clean_text = clean_text.strip()
     
     return clean_text
 
@@ -211,16 +207,17 @@ async def _generate_edge_tts(text: str, output_audio: str, output_srt: str, rate
                 })
                 current_offset += w_duration + space_duration
 
-    # Xuất file SRT (SubRip format)
-    srt_content = submaker.get_srt()
-    with open(output_srt, "w", encoding="utf-8") as srt_file:
-        srt_file.write(srt_content)
-
     # Xuất file JSON chứa chi tiết từng từ
     words_data = _build_words_json(word_boundaries)
     words_json_path = output_srt.replace(".srt", "_words.json")
     with open(words_json_path, "w", encoding="utf-8") as f:
         json.dump(words_data, f, ensure_ascii=False, indent=2)
+
+    # Xuất file SRT (SubRip format)
+    # Tự sinh SRT từ words_data bằng _words_to_srt để tránh bị rỗng đối với tiếng Việt (do không có WordBoundary từ API)
+    srt_content = _words_to_srt(words_data, words_per_group=5)
+    with open(output_srt, "w", encoding="utf-8") as srt_file:
+        srt_file.write(srt_content)
 
     return words_data
 
@@ -541,7 +538,15 @@ async def _generate_tiktok_api(text: str, output_audio: str, output_srt: str, ra
     chunk_durations = tiktok_tts.generate_tiktok_tts(text, voice, output_audio)
 
     # 2. Dựng phụ đề thẳng từ độ dài audio TikTok (chính xác nhất, không cần Edge)
-    if chunk_durations and sum(d for _, d in chunk_durations) > 0:
+    summed_dur = sum(d for _, d in chunk_durations) if chunk_durations else 0.0
+    if chunk_durations and summed_dur > 0:
+        # Chống drift: tổng duration đo từng chunk lệch với duration file gộp
+        # (MP3 frame padding tích lũy) → scale lại toàn bộ timing theo file thật.
+        real_dur = _audio_duration(output_audio)
+        if real_dur > 0 and abs(real_dur - summed_dur) > 0.05:
+            scale = real_dur / summed_dur
+            logger.info(f"  [TTS] Hiệu chỉnh drift phụ đề: {summed_dur:.2f}s (cộng dồn) → {real_dur:.2f}s (thật), scale={scale:.4f}")
+            chunk_durations = [(txt, d * scale) for txt, d in chunk_durations]
         logger.info(f"  [TTS] Sync phụ đề theo {len(chunk_durations)} chunk audio TikTok thật.")
         _build_timing_from_chunks(chunk_durations, output_srt)
         return
@@ -562,7 +567,7 @@ async def _generate_tiktok_api(text: str, output_audio: str, output_srt: str, ra
 # MAIN ENTRY POINT
 # ============================================================
 
-async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+20%", voice: str = "hoaimy", raw_text_input: str = None):
+async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+50%", voice: str = "hoaimy", raw_text_input: str = None):
     """
     Đọc file kịch bản hoặc nhận text trực tiếp, sinh ra audio MP3 và subtitle SRT.
 
@@ -605,11 +610,7 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
         voice_id = EDGE_VOICES.get(voice.lower(), voice)
         await _generate_edge_tts(text, output_audio, output_srt, rate, voice_id)
     elif engine == "tiktok":
-        try:
-            await _generate_tiktok_api(text, output_audio, output_srt, rate, voice)
-        except Exception as e:
-            logger.info(f"  [TTS] ❌ Lỗi: TikTok TTS thất bại ({e})")
-            raise RuntimeError(f"TikTok TTS engine failed: {e}") from e
+        await _generate_tiktok_api(text, output_audio, output_srt, rate, voice)
     elif engine == "fpt":
         _generate_fpt_tts(text, output_audio, output_srt, rate, voice)
 
@@ -619,7 +620,7 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
     logger.info(f"  [TTS] ✅ Word timing saved: {words_json_path}")
 
 
-def run_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+20%", voice: str = "hoaimy", raw_text_input: str = None):
+def run_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+50%", voice: str = "hoaimy", raw_text_input: str = None):
     """Wrapper đồng bộ cho generate_tts."""
     asyncio.run(generate_tts(text_file, output_audio, output_srt, rate=rate, voice=voice, raw_text_input=raw_text_input))
 

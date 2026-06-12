@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body, html {
+      margin: 0; padding: 0; width: 1080px; height: 1920px;
+      background: black; overflow: hidden;
+      font-family: 'Montserrat', sans-serif;
+    }
+    #container {
+      position: relative; width: 1080px; height: 1920px;
+    }
+    #background-video {
+      position: absolute; width: 1080px; height: 1920px;
+      object-fit: cover; z-index: 1;
+    }
+    #overlay {
+      position: absolute; top: 0; left: 0; width: 1080px; height: 1920px;
+      background: rgba(0, 0, 0, 0.45); z-index: 2;
+    }
+    #subtitles {
+      position: absolute; bottom: 400px; width: 100%;
+      display: flex; justify-content: center; align-items: center;
+      z-index: 3; text-align: center; box-sizing: border-box;
+      padding: 0 80px;
+    }
+    .word-container {
+      display: flex; flex-wrap: wrap; justify-content: center;
+      gap: 18px; font-size: 80px; font-weight: 900;
+      text-transform: uppercase; color: white;
+    }
+    .word {
+      display: inline-block;
+      opacity: 0.35;
+      transform: scale(0.85);
+      /* Hiệu ứng viền chữ đen dày kiểu MrBeast */
+      -webkit-text-stroke: 6px black;
+      paint-order: stroke fill;
+    }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@900&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+</head>
+<body>
+  <div id="container">
+    <video id="background-video" src="" muted loop></video>
+    <div id="overlay"></div>
+    <div id="subtitles">
+      <div class="word-container" id="word-container"></div>
+    </div>
+  </div>
+  <script>
+    // Dữ liệu phụ đề mẫu (tiếng Việt) khớp với thời gian kịch bản mẫu
+    const subtitles = [
+      { text: "Hành", start: 0.0, end: 0.3 },
+      { text: "lá", start: 0.3, end: 0.6 },
+      { text: "mua", start: 0.6, end: 0.9 },
+      { text: "về", start: 0.9, end: 1.2 },
+      { text: "đừng", start: 1.2, end: 1.5 },
+      { text: "bao", start: 1.5, end: 1.8 },
+      { text: "giờ", start: 1.8, end: 2.1 },
+      { text: "bỏ", start: 2.1, end: 2.4 },
+      { text: "tủ", start: 2.4, end: 2.7 },
+      { text: "lạnh", start: 2.7, end: 3.1 },
+      { text: "nguyên", start: 3.1, end: 3.4 },
+      { text: "cây!", start: 3.4, end: 3.8 }
+    ];
+
+    // Render các từ ra màn hình
+    const container = document.getElementById("word-container");
+    subtitles.forEach((item, index) => {
+      const span = document.createElement("span");
+      span.className = "word";
+      span.innerText = item.text;
+      span.id = "word-" + index;
+      container.appendChild(span);
+    });
+
+    // Khởi tạo GSAP Timeline
+    const tl = gsap.timeline({ paused: true });
+    
+    // Tạo hiệu ứng highlight chuyển động nảy cho từng từ
+    subtitles.forEach((item, index) => {
+      // Khi từ được kích hoạt đọc đến (Active)
+      tl.to(`#word-${index}`, {
+        opacity: 1,
+        color: "#F7C204", // Màu vàng sáng đặc trưng MrBeast
+        scale: 1.25,
+        duration: 0.15,
+        ease: "back.out(2)" // Hiệu ứng nảy đàn hồi cực sinh động
+      }, item.start);
+
+      // Khi từ kết thúc phát âm (Deactive)
+      tl.to(`#word-${index}`, {
+        opacity: 0.35,
+        color: "#ffffff",
+        scale: 0.85,
+        duration: 0.15,
+        ease: "power1.inOut"
+      }, item.end);
+    });
+
+    // Hàm toàn cục để Python Playwright gọi và seek đến giây cụ thể
+    window.seekTo = function(seconds) {
+      tl.seek(seconds);
+      
+      // Đồng bộ video nền nếu có
+      const video = document.getElementById("background-video");
+      if (video && video.readyState >= 2) {
+        video.currentTime = seconds % video.duration;
+      }
+    };
+
+    // Hàm thiết lập video nền
+    window.setBackgroundVideo = function(src) {
+      const video = document.getElementById("background-video");
+      video.src = src;
+      video.load();
+    };
+  </script>
+</body>
+</html>

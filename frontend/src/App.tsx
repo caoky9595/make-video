@@ -20,6 +20,19 @@ function App() {
     setSelectedVideos(newSet);
   }
 
+  const refreshStats = () => {
+    api.get('/stats', true)
+      .then(statsData => {
+        setStats({
+          videos_created: statsData.videos_created || 0,
+          total_size_mb: statsData.total_size_mb || 0,
+          ai_used_today: statsData.ai_used_today || 0,
+          ai_limit: statsData.ai_limit || 10,
+        });
+      })
+      .catch(console.error);
+  };
+
   const handleDelete = (path: string | 'all' | 'selected') => {
     let bodyPayload: any = {};
     let confirmMsg = '';
@@ -56,6 +69,8 @@ function App() {
             if (selectedVideos.has(path as string)) toggleSelect(path as string, { stopPropagation: () => {} } as any);
           }
           setPreviewVideo(null);
+          // Tự động cập nhật lại số lượng và dung lượng trên dashboard
+          refreshStats();
         } else {
           alert('Lỗi: ' + data.error);
         }
@@ -63,23 +78,29 @@ function App() {
       .catch(err => alert('Lỗi: ' + err.message));
   };
 
+  const refreshVideos = () => {
+    api.get('/affiliate/videos', true)
+      .then(videosData => setVideos(videosData || []))
+      .catch(console.error);
+  };
+
   useEffect(() => {
     localStorage.setItem('activePage', activePage);
     if (activePage === 'dashboard') {
-      Promise.all([
-        api.get('/stats'),
-        api.get('/affiliate/videos')
-      ]).then(([statsData, videosData]) => {
-        setStats({
-          videos_created: statsData.videos_created || 0,
-          total_size_mb: statsData.total_size_mb || 0,
-          ai_used_today: statsData.ai_used_today || 0,
-          ai_limit: statsData.ai_limit || 10,
-        });
-        setVideos(videosData || []);
-      }).catch(console.error);
+      refreshStats();
+      refreshVideos();
     }
   }, [activePage]);
+
+  // Editor bắn event này khi render xong → cập nhật danh sách video + stats ngay
+  useEffect(() => {
+    const onVideoCompleted = () => {
+      refreshStats();
+      refreshVideos();
+    };
+    window.addEventListener('video-completed', onVideoCompleted);
+    return () => window.removeEventListener('video-completed', onVideoCompleted);
+  }, []);
 
   return (
     <div className="app-container">
@@ -209,9 +230,14 @@ function App() {
                        <button style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.6)', border: 'none', color: '#ef4444', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 2 }} onClick={(e) => { e.stopPropagation(); handleDelete(v.path); }}>
                          <span className="icon" style={{ fontSize: '16px' }}>delete</span>
                        </button>
-                       <div style={{ width: '100%', aspectRatio: '9/16', background: v.cover ? `url(/media/${v.cover}) center/cover` : 'var(--bg-card)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', overflow: 'hidden' }} onClick={() => setPreviewVideo(v.path)}>
-                         <span className="icon" style={{ fontSize: '32px', color: 'var(--primary)', zIndex: 1 }}>play_circle</span>
-                         <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(to bottom, rgba(0,0,0,0.2), rgba(0,0,0,0.6))' }}></div>
+                       <div style={{ width: '100%', aspectRatio: '9/16', borderRadius: '8px', cursor: 'pointer', position: 'relative', overflow: 'hidden', background: 'var(--bg-card)' }} onClick={() => setPreviewVideo(v.path)}>
+                         {v.cover && (
+                           <img src={`/media/${v.cover}`} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                         )}
+                         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.55) 100%)' }} />
+                         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                           <span className="icon" style={{ fontSize: '40px', color: 'white', opacity: 0.9, filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.8))' }}>play_circle</span>
+                         </div>
                        </div>
                        <p style={{ fontSize: '12px', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</p>
                        <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{v.size_mb} MB • {v.created}</p>

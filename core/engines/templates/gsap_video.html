@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body, html {
+      margin: 0; padding: 0; width: 1080px; height: 1920px;
+      background: black; overflow: hidden;
+    }
+    #container {
+      position: relative; width: 1080px; height: 1920px;
+      overflow: hidden;
+    }
+    #background-video {
+      position: absolute; width: 1080px; height: 1920px;
+      object-fit: cover; z-index: 1;
+    }
+    #overlay {
+      position: absolute; top: 0; left: 0; width: 1080px; height: 1920px;
+      background: rgba(0, 0, 0, 0.4); z-index: 2;
+    }
+    #subtitles {
+      position: absolute; width: 100%;
+      display: flex; justify-content: center; align-items: center;
+      z-index: 3; text-align: center; box-sizing: border-box;
+      padding: 0 80px;
+    }
+    /* word-container chứa các segment — không flex-wrap để tránh tràn */
+    .word-container {
+      width: 100%;
+    }
+    /* Mỗi segment là 1 nhóm từ hiển thị cùng lúc */
+    .segment {
+      display: none;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      width: 100%;
+    }
+    .word {
+      display: inline-block;
+      white-space: nowrap;
+    }
+
+    /* ============================================================
+       STYLE 1: MrBeast (Viral)
+       ============================================================ */
+    body.style-mrbeast { font-family: 'Montserrat', sans-serif; }
+    body.style-mrbeast .segment {
+      font-size: 80px; font-weight: 900;
+      text-transform: uppercase; color: white;
+      gap: 18px;
+    }
+    body.style-mrbeast .word {
+      opacity: 0.35;
+      -webkit-text-stroke: 6px black;
+      paint-order: stroke fill;
+    }
+
+    /* ============================================================
+       STYLE 2: Ali Abdaal (Minimal)
+       ============================================================ */
+    body.style-ali { font-family: 'Inter', sans-serif; }
+    body.style-ali .segment {
+      font-size: 72px; font-weight: 700;
+      text-transform: lowercase; color: white;
+      gap: 14px;
+    }
+    body.style-ali .word {
+      opacity: 0.4;
+      text-shadow: 0 4px 8px rgba(0,0,0,0.5);
+    }
+
+    /* ============================================================
+       STYLE 3: Marker Box
+       ============================================================ */
+    body.style-marker { font-family: 'Montserrat', sans-serif; }
+    body.style-marker .segment {
+      font-size: 75px; font-weight: 900;
+      text-transform: uppercase; color: white;
+      gap: 20px;
+    }
+    body.style-marker .word {
+      opacity: 0.5;
+      padding: 4px 12px;
+      border-radius: 8px;
+      text-shadow: 0 4px 6px rgba(0,0,0,0.4);
+    }
+
+    /* ============================================================
+       STYLE 4: Typewriter
+       ============================================================ */
+    body.style-typewriter { font-family: 'Courier New', Courier, monospace; }
+    body.style-typewriter .segment {
+      font-size: 65px; font-weight: 800;
+      color: white; gap: 12px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 24px 40px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    body.style-typewriter .word { opacity: 0; }
+
+    /* ============================================================
+       STYLE 5: Aesthetic (Elegant Gold)
+       ============================================================ */
+    body.style-aesthetic { font-family: 'Lora', 'Playfair Display', serif; }
+    body.style-aesthetic .segment {
+      font-size: 70px; font-style: italic;
+      color: #f3f4f6; gap: 16px;
+    }
+    body.style-aesthetic .word {
+      opacity: 0.3;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@900&family=Inter:wght@700;900&family=Lora:ital,wght@1,600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+</head>
+<body class="style-mrbeast">
+  <div id="container">
+    <video id="background-video" src="" muted loop></video>
+    <div id="overlay"></div>
+    <div id="subtitles">
+      <div class="word-container" id="word-container"></div>
+    </div>
+  </div>
+  <script>
+    let subtitles = [];
+    let tl = null;
+
+    const styleMap = {
+      1: 'style-mrbeast',
+      2: 'style-ali',
+      3: 'style-marker',
+      4: 'style-typewriter',
+      5: 'style-aesthetic'
+    };
+
+    // Số từ tối đa hiển thị cùng lúc — điều chỉnh cho từng style
+    const WORDS_PER_SEGMENT = {
+      1: 4,  // MrBeast: chữ to, ít từ/dòng
+      2: 5,
+      3: 4,
+      4: 6,  // Typewriter: chữ nhỏ hơn, nhiều từ hơn
+      5: 5
+    };
+
+    window.setSubtitles = function(subData, styleId, position) {
+      subtitles = subData;
+      document.body.className = styleMap[styleId] || 'style-mrbeast';
+
+      // Áp dụng vị trí phụ đề
+      const subEl = document.getElementById("subtitles");
+      subEl.style.cssText = ""; // reset inline style
+      if (position === "top") {
+        subEl.style.top = "250px";
+      } else if (position === "center") {
+        subEl.style.top = "50%";
+        subEl.style.transform = "translateY(-50%)";
+      } else {
+        subEl.style.bottom = "350px";
+      }
+
+      const container = document.getElementById("word-container");
+      container.innerHTML = "";
+
+      const segSize = WORDS_PER_SEGMENT[styleId] || 5;
+
+      // Chia từ thành các nhóm (segment), mỗi nhóm hiển thị cùng lúc
+      const segments = [];
+      for (let i = 0; i < subtitles.length; i += segSize) {
+        segments.push({
+          words: subtitles.slice(i, i + segSize),
+          startIdx: i
+        });
+      }
+
+      // Tạo DOM: mỗi segment là một div riêng
+      segments.forEach((seg, segIdx) => {
+        const segDiv = document.createElement("div");
+        segDiv.className = "segment";
+        segDiv.id = "seg-" + segIdx;
+
+        seg.words.forEach((item, wIdx) => {
+          const gIdx = seg.startIdx + wIdx;
+          const span = document.createElement("span");
+          span.className = "word";
+          span.innerText = item.text;
+          span.id = "word-" + gIdx;
+          segDiv.appendChild(span);
+        });
+
+        container.appendChild(segDiv);
+      });
+
+      // Xây dựng GSAP timeline
+      if (tl) tl.kill();
+      tl = gsap.timeline({ paused: true });
+
+      segments.forEach((seg, segIdx) => {
+        const segStart = seg.words[0].start;
+        const segEnd   = seg.words[seg.words.length - 1].end;
+        // Segment tiếp theo bắt đầu (hoặc kết thúc âm thanh)
+        const nextStart = (segIdx + 1 < segments.length)
+          ? segments[segIdx + 1].words[0].start
+          : segEnd + 0.1;
+
+        // Hiện segment tại thời điểm từ đầu tiên bắt đầu nói
+        tl.set("#seg-" + segIdx, { display: "flex" }, segStart);
+        // Ẩn segment khi segment kế tiếp xuất hiện
+        tl.set("#seg-" + segIdx, { display: "none" }, nextStart);
+
+        // Animate từng từ trong segment
+        seg.words.forEach((item, wIdx) => {
+          const gIdx = seg.startIdx + wIdx;
+          const id = `#word-${gIdx}`;
+
+          if (styleId === 1) { // MrBeast
+            tl.to(id, { opacity: 1, color: "#F7C204", scale: 1.15, duration: 0.15, ease: "back.out(2)" }, item.start);
+            tl.to(id, { opacity: 0.35, color: "#ffffff", scale: 1.0, duration: 0.15, ease: "power1.inOut" }, item.end);
+          }
+          else if (styleId === 2) { // Ali Abdaal
+            tl.to(id, { opacity: 1, color: "#06b6d4", scale: 1.08, duration: 0.12, ease: "power2.out" }, item.start);
+            tl.to(id, { opacity: 0.4, color: "#ffffff", scale: 1.0, duration: 0.12, ease: "power2.in" }, item.end);
+          }
+          else if (styleId === 3) { // Marker Box
+            tl.to(id, { opacity: 1, color: "#000000", backgroundColor: "#22c55e", scale: 1.08, skewX: -6, duration: 0.1, ease: "power2.out" }, item.start);
+            tl.to(id, { opacity: 0.5, color: "#ffffff", backgroundColor: "transparent", scale: 1.0, skewX: 0, duration: 0.1, ease: "power2.in" }, item.end);
+          }
+          else if (styleId === 4) { // Typewriter
+            tl.to(id, { opacity: 1, scale: 1, duration: 0.05 }, item.start);
+            tl.to(id, { opacity: 0.25, duration: 0.1 }, item.end);
+          }
+          else if (styleId === 5) { // Aesthetic
+            tl.to(id, { opacity: 1, color: "#fbbf24", scale: 1.06, duration: 0.18, ease: "sine.out" }, item.start);
+            tl.to(id, { opacity: 0.3, color: "#f3f4f6", scale: 1.0, duration: 0.18, ease: "sine.in" }, item.end);
+          }
+        });
+      });
+    };
+
+    // Đồng bộ frame theo thời gian
+    window.seekTo = function(seconds) {
+      if (tl) tl.seek(seconds);
+      const video = document.getElementById("background-video");
+      if (video && video.readyState >= 2) {
+        video.currentTime = seconds % video.duration;
+      }
+    };
+
+    // Thiết lập video nền
+    window.setBackgroundVideo = function(src) {
+      const video = document.getElementById("background-video");
+      video.src = src;
+      video.load();
+    };
+  </script>
+</body>
+</html>
