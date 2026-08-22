@@ -7,7 +7,7 @@ interface SidebarProps {
 
 const NAV_ITEMS = [
   { id: 'dashboard', icon: 'space_dashboard', label: 'Bảng điều khiển', color: '#9333ea' },
-  { id: 'editor', icon: 'movie_edit', label: 'Studio Mẹo Vặt', color: '#3b82f6' },
+  { id: 'editor', icon: 'movie_edit', label: 'Studio Sự Thật', color: '#3b82f6' },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ activePage, setActivePage }) => {

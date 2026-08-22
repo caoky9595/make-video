@@ -1,156 +1,78 @@
 """
 music_finder.py - Auto Music Resolver for Studio
 ===============================================
-Finds suitable background music from local library or online free-to-use API.
+Chọn nhạc nền phù hợp mood kịch bản từ thư viện nhạc local đã upload (`audio_bg/`).
 """
 
 import os
+import random
 import re
-import time
-from urllib.parse import urlparse
 
-import requests
-from dotenv import load_dotenv
 from core.utils.logger_config import logger
 
-load_dotenv()
 
-
-MOOD_MAP = {
-    r"\bbuon\b|\bbuồn\b|\btam su\b|\btâm sự\b": "sad piano emotional",
-    r"\bkinh di\b|\bkinh dị\b|\bso\b|\bsợ\b": "dark suspense cinematic",
-    r"\bhai\b|\bfunny\b|\bvui\b": "happy upbeat",
-    r"\bchill\b|\blofi\b": "lofi chill",
-    r"\binspire\b|\bdong luc\b|\bđộng lực\b": "inspiring motivational",
+# Mỗi mood gồm nhiều từ khoá (tiếng Việt có/không dấu) — cộng dồn điểm theo SỐ LẦN khớp thay vì
+# dừng ở mood đầu tiên tìm thấy, để phản ánh đúng hơn tâm trạng chủ đạo của cả kịch bản. Từ khoá
+# được chọn theo ngách Sự Thật Thú Vị & Tâm Lý Cuộc Sống (thay vì bộ từ khoá chung chung cũ hầu
+# như không bao giờ khớp với nội dung ngách này).
+MOOD_KEYWORDS = {
+    "calm soft ambient reflective": [
+        r"ngủ", r"mất ngủ", r"thư giãn", r"bình yên", r"tĩnh lặng", r"chill", r"lofi", r"nhẹ nhàng",
+    ],
+    "melancholic emotional piano": [
+        # KHÔNG dùng riêng chữ "nhớ": ngách này đầy từ "trí nhớ"/"ghi nhớ" (chuyện nhận thức,
+        # trung tính) — khớp bừa sẽ gán nhạc piano buồn cho video mẹo cải thiện trí nhớ.
+        r"buồn", r"cô đơn", r"chia tay", r"mất mát", r"tổn thương", r"khóc",
+        r"nhớ nhung", r"thương nhớ", r"tiếc nuối",
+    ],
+    "tense anxious suspenseful": [
+        r"lo âu", r"lo lắng", r"căng thẳng", r"sợ", r"áp lực", r"stress", r"hoảng", r"ám ảnh",
+    ],
+    "upbeat motivational inspiring": [
+        r"động lực", r"cố gắng", r"thành công", r"tự tin", r"vượt qua", r"mạnh mẽ", r"thay đổi",
+    ],
+    "playful quirky lighthearted": [
+        r"hài", r"vui", r"funny", r"buồn cười", r"thú vị", r"bất ngờ",
+    ],
+    "dark mysterious cinematic": [
+        # BỎ "sự thật": tên ngách là "Sự Thật Thú Vị" nên gần như kịch bản nào cũng chứa cụm này,
+        # để lại thì đa số video bị gán nhạc kiểu kinh dị — sai hẳn tông mẹo tâm lý đời thường.
+        r"kinh dị", r"bí ẩn", r"rùng rợn", r"ghê rợn", r"đáng sợ",
+    ],
 }
+
+# Mood mặc định khi kịch bản không rơi rõ vào nhóm nào — trung tính, hợp giọng kể chuyện đời
+# thường/tâm lý (không quá kịch tính như "cinematic" chung chung trước đây).
+DEFAULT_MOOD_QUERY = "calm contemplative background instrumental"
 
 
 def _extract_music_query(script_text: str, custom_query: str = "") -> str:
+    """Xác định 1 mood-query cho kịch bản bằng cách CỘNG DỒN điểm khớp từ khoá mỗi nhóm mood,
+    chọn nhóm điểm cao nhất — thay vì dừng ở nhóm đầu tiên khớp (dễ chọn sai khi kịch bản có cả
+    từ khoá của nhiều nhóm)."""
     if custom_query.strip():
         return custom_query.strip()
 
     script_lower = script_text.lower()
-    for pattern, query in MOOD_MAP.items():
-        if re.search(pattern, script_lower):
-            return query
+    scores = {}
+    for mood_query, keywords in MOOD_KEYWORDS.items():
+        score = sum(1 for kw in keywords if re.search(kw, script_lower))
+        if score > 0:
+            scores[mood_query] = score
 
-    return "cinematic background instrumental"
-
-
-def _normalize_track_items(payload):
-    """Accept multiple API schemas and normalize into (title, audio_url)."""
-    candidates = []
-
-    if isinstance(payload, list):
-        candidates = payload
-    elif isinstance(payload, dict):
-        for key in ("tracks", "results", "items", "data"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                candidates = value
-                break
-            if isinstance(value, dict):
-                nested = value.get("items") or value.get("results")
-                if isinstance(nested, list):
-                    candidates = nested
-                    break
-
-    normalized = []
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-
-        title = item.get("title") or item.get("name") or "track"
-
-        audio_url = (
-            item.get("download_url")
-            or item.get("audio_url")
-            or item.get("preview_url")
-            or item.get("url")
-        )
-
-        if not audio_url and isinstance(item.get("file"), dict):
-            audio_url = item["file"].get("url")
-
-        if not audio_url or not isinstance(audio_url, str):
-            continue
-
-        normalized.append({"title": title, "audio_url": audio_url})
-
-    return normalized
-
-
-def _search_freetouse_tracks(query: str, limit: int = 8):
-    """
-    Search track candidates from a configurable free-to-use music API.
-
-    Required env:
-      - FREETOUSE_API_URL
-      - FREETOUSE_API_KEY (optional, depends on provider)
-
-    Notes:
-      The parser is schema-tolerant so users can plug in API providers with
-      minor response differences.
-    """
-    base_url = (os.getenv("FREETOUSE_API_URL") or "").strip()
-    api_key = (os.getenv("FREETOUSE_API_KEY") or "").strip()
-
-    if not base_url:
-        logger.info("  [Music AI] FREETOUSE_API_URL chưa cấu hình. Bỏ qua AI online.")
-        return []
-
-    headers = {}
-    if api_key:
-        # Set common auth headers to support multiple providers.
-        headers["Authorization"] = f"Bearer {api_key}"
-        headers["X-API-Key"] = api_key
-
-    params = {
-        "q": query,
-        "query": query,
-        "limit": limit,
-    }
-
-    try:
-        resp = requests.get(base_url, headers=headers, params=params, timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-        return _normalize_track_items(data)
-    except Exception as e:
-        logger.info(f"  [Music AI] API search failed: {e}")
-        return []
-
-
-def _infer_extension(url: str) -> str:
-    path = urlparse(url).path.lower()
-    for ext in (".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm"):
-        if path.endswith(ext):
-            return ext
-    return ".mp3"
-
-
-def _download_track(track: dict, output_dir: str = "audio_bg"):
-    os.makedirs(output_dir, exist_ok=True)
-    ext = _infer_extension(track["audio_url"])
-    slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", track.get("title", "track")).strip("_")[:40]
-    filename = f"auto_{slug}_{int(time.time())}{ext}"
-    out_path = os.path.join(output_dir, filename)
-
-    try:
-        r = requests.get(track["audio_url"], timeout=30)
-        r.raise_for_status()
-        with open(out_path, "wb") as f:
-            f.write(r.content)
-
-        logger.info(f"  [Music AI] Downloaded: {filename}")
-        return out_path
-    except Exception as e:
-        logger.info(f"  [Music AI] Download failed: {e}")
-        return None
+    if not scores:
+        return DEFAULT_MOOD_QUERY
+    return max(scores, key=scores.get)
 
 
 def pick_local_music_for_script(script_text: str, music_dir: str = "audio_bg"):
-    """Pick local music for script."""
+    """Chọn 1 file nhạc trong thư viện local hợp mood kịch bản nhất.
+
+    Khớp theo TÊN FILE — chỉ hoạt động đúng nghĩa nếu file được đặt tên có từ khoá liên quan
+    (vd `calm_piano_01.mp3`, `upbeat_motivation.mp3`). Không thể suy ra mood thật của 1 file từ
+    tên chung chung (vd `sample.mp3`) — trường hợp đó (hoặc khi không file nào khớp được từ nào)
+    sẽ chọn NGẪU NHIÊN thật trong toàn bộ thư viện, thay vì luôn rơi vào cùng 1 file cố định.
+    """
     if not os.path.isdir(music_dir):
         return None
 
@@ -168,35 +90,17 @@ def pick_local_music_for_script(script_text: str, music_dir: str = "audio_bg"):
         score = len(query_tokens.intersection(file_tokens))
         scored.append((score, t))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    best_name = scored[0][1]
+    best_score = max(s for s, _ in scored)
+    best_candidates = [t for s, t in scored if s == best_score]
+    # Không tên file nào khớp có nghĩa (best_score == 0 nghĩa là mọi file đều điểm 0, tức không
+    # phân biệt được) -> chọn ngẫu nhiên thật trong TOÀN BỘ thư viện thay vì trong "best_candidates"
+    # (lúc đó best_candidates chính là toàn bộ danh sách nên kết quả tương đương, nhưng viết rõ
+    # ràng cho dễ hiểu ý đồ).
+    best_name = random.choice(best_candidates)
     best_path = os.path.join(music_dir, best_name)
-    logger.info(f"  [Music AI] Local selected: {best_name}")
+
+    if best_score > 0:
+        logger.info(f"  [Music AI] Mood '{query}' khớp tên file -> chọn: {best_name}")
+    else:
+        logger.info(f"  [Music AI] Không file nào khớp mood '{query}' theo tên -> chọn ngẫu nhiên: {best_name}")
     return best_path
-
-
-def resolve_music_for_script(
-    script_text: str,
-    output_dir: str = "audio_bg",
-    music_query: str = "",
-    provider: str = "freetouse",
-):
-    """Resolve music for script."""
-    query = _extract_music_query(script_text, custom_query=music_query)
-    logger.info(f"  [Music AI] Query: {query}")
-
-    if provider != "freetouse":
-        logger.info(f"  [Music AI] Provider '{provider}' chưa hỗ trợ.")
-        return None
-
-    tracks = _search_freetouse_tracks(query)
-    if not tracks:
-        return None
-
-    for track in tracks:
-        path = _download_track(track, output_dir=output_dir)
-        if path:
-            return path
-
-    return None
-

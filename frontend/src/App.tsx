@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api } from './api'
 import { Sidebar } from './components/Sidebar'
 import { Editor } from './components/Editor'
 
 function App() {
+  const editorRef = useRef<HTMLDivElement>(null)
   const [activePage, setActivePage] = useState(() => {
     return localStorage.getItem('activePage') || 'dashboard';
   })
@@ -50,13 +51,8 @@ function App() {
     }
 
     if (!window.confirm(confirmMsg)) return;
-    
-    fetch('/api/affiliate/videos', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bodyPayload)
-    })
-      .then(res => res.json())
+
+    api.del('/affiliate/videos', bodyPayload)
       .then(data => {
         if (data.success) {
           if (path === 'all') {
@@ -90,6 +86,37 @@ function App() {
       refreshStats();
       refreshVideos();
     }
+  }, [activePage]);
+
+  // Chỉ cho phép 1 video phát tại một thời điểm. Editor KHÔNG bị unmount khi chuyển trang
+  // (chỉ ẩn bằng display:none) mà `display:none` không hề dừng tiếng của thẻ <video> — nên
+  // video preview trong Editor vẫn chạy ngầm, mở thêm video ở Dashboard là nghe 2 tiếng chồng nhau.
+  // Sự kiện 'play' không bubble nên phải bắt ở capture phase.
+  useEffect(() => {
+    const onPlay = (e: Event) => {
+      const target = e.target as HTMLMediaElement;
+      // Video đang bị ẩn (display:none) mà tự chạy — vd render xong lúc đang ở Dashboard thì
+      // preview autoPlay trong Editor ẩn vẫn phát tiếng. Chặn ngay, không cho phát ngầm.
+      if (target.offsetParent === null) {
+        target.pause();
+        return;
+      }
+      document.querySelectorAll('video, audio').forEach(el => {
+        const media = el as HTMLMediaElement;
+        if (media !== target && !media.paused) media.pause();
+      });
+    };
+    document.addEventListener('play', onPlay, true);
+    return () => document.removeEventListener('play', onPlay, true);
+  }, []);
+
+  // Rời khỏi trang Editor thì dừng hẳn video đang phát trong đó (nó chỉ bị ẩn, không unmount).
+  useEffect(() => {
+    if (activePage === 'editor') return;
+    editorRef.current?.querySelectorAll('video, audio').forEach(el => {
+      const media = el as HTMLMediaElement;
+      if (!media.paused) media.pause();
+    });
   }, [activePage]);
 
   // Editor bắn event này khi render xong → cập nhật danh sách video + stats ngay
@@ -257,7 +284,7 @@ function App() {
             </div>
           )}
 
-          <div style={{ display: activePage === 'editor' ? 'block' : 'none', height: '100%' }}>
+          <div ref={editorRef} style={{ display: activePage === 'editor' ? 'block' : 'none', height: '100%' }}>
             <Editor />
           </div>
         </div>

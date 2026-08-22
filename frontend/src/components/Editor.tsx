@@ -11,6 +11,22 @@ export const Editor: React.FC = () => {
   const bgInputRef = useRef<HTMLInputElement>(null);
   const musicInputRef = useRef<HTMLInputElement>(null);
 
+  const [ideaInputValue, setIdeaInputValue] = useState('');
+  const [selectedIdeaId, setSelectedIdeaId] = useState<number | null>(null);
+  const [ideaFormat, setIdeaFormat] = useState('');
+  const [scriptMode, setScriptMode] = useState(() => localStorage.getItem('editor_script_mode') || 'viral');
+  const [wordCap, setWordCap] = useState(() => Number(localStorage.getItem('editor_word_cap')) || 65);
+  const [ideaBank, setIdeaBank] = useState<any[]>([]);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+
+  const [scenePrompts, setScenePrompts] = useState<any[]>([]);
+  const [isGeneratingScenes, setIsGeneratingScenes] = useState(false);
+  const [copiedSceneIndex, setCopiedSceneIndex] = useState<number | null>(null);
+  const [recommendedDuration, setRecommendedDuration] = useState<number | null>(null);
+
+  const [publishKit, setPublishKit] = useState<any>(null);
+  const [isGeneratingKit, setIsGeneratingKit] = useState(false);
+
   const [toast, setToast] = useState<string | null>(null);
   const prevRunningRef = useRef(false);
 
@@ -27,10 +43,98 @@ export const Editor: React.FC = () => {
     fetch('/api/music').then(r => r.json()).then(d => setMusicFiles((d || []).map((f: any) => f.name || f)))
       .catch(() => showToast('⚠️ Không tải được danh sách nhạc'));
 
+  const fetchIdeaBank = () =>
+    fetch(`/api/ideas?status=new&mode=${scriptMode}`).then(r => r.json()).then(d => setIdeaBank(d.ideas || []))
+      .catch(() => showToast('⚠️ Không tải được ngân hàng ý tưởng'));
+
+  const handleSuggestIdeas = async () => {
+    setIsSuggesting(true);
+    try {
+      const res = await fetch('/api/ideas/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: ideaFormat, mode: scriptMode })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+      } else {
+        fetchIdeaBank();
+      }
+    } catch (e: any) {
+      alert('Lỗi gợi ý ý tưởng: ' + e.message);
+    } finally {
+      setIsSuggesting(false);
+    }
+  };
+
+  const handleUseIdea = (idea: any) => {
+    setIdeaInputValue(idea.text);
+    setSelectedIdeaId(idea.id);
+  };
+
+  const handleSkipIdea = (id: number) =>
+    fetch(`/api/ideas/${id}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'skipped' }) })
+      .then(() => fetchIdeaBank())
+      .catch(() => showToast('⚠️ Cập nhật ý tưởng thất bại'));
+
+  const handleGenerateScenePrompts = async () => {
+    if (!script.trim()) { alert('Vui lòng nhập/tạo kịch bản trước.'); return; }
+    setIsGeneratingScenes(true);
+    try {
+      const res = await fetch('/api/scene-prompts/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script })
+      });
+      const data = await res.json();
+      if (data.error) alert(data.error);
+      else {
+        setScenePrompts(data.scenes || []);
+        setRecommendedDuration(data.recommended_duration_sec || null);
+      }
+    } catch (e: any) {
+      alert('Lỗi sinh prompt cảnh: ' + e.message);
+    } finally {
+      setIsGeneratingScenes(false);
+    }
+  };
+
+  const handleCopyScenePrompt = (index: number, prompt: string) => {
+    navigator.clipboard.writeText(prompt).then(() => {
+      setCopiedSceneIndex(index);
+      setTimeout(() => setCopiedSceneIndex(null), 1500);
+    });
+  };
+
+  const handleGeneratePublishKit = async (scriptText: string) => {
+    if (!scriptText.trim()) return;
+    setIsGeneratingKit(true);
+    try {
+      const res = await fetch('/api/publish-kit/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script: scriptText })
+      });
+      const data = await res.json();
+      if (data.error) showToast('⚠️ ' + data.error);
+      else setPublishKit(data);
+    } catch (e: any) {
+      showToast('⚠️ Không sinh được caption: ' + e.message);
+    } finally {
+      setIsGeneratingKit(false);
+    }
+  };
+
   const uploadBg = async (files: FileList) => {
     try {
       const fd = new FormData();
-      Array.from(files).forEach(f => fd.append('images', f));
+      // Gửi kèm lastModified (thời điểm file được tải về máy) — server dùng nó đặt lại mtime,
+      // nếu không thì mtime thành giờ upload và thứ tự cảnh bị sai.
+      Array.from(files).forEach(f => {
+        fd.append('images', f);
+        fd.append('last_modified', String(f.lastModified || 0));
+      });
       const res = await fetch('/api/images/upload', { method: 'POST', body: fd });
       const d = await res.json();
       if (d.error) alert(d.error);
@@ -58,6 +162,27 @@ export const Editor: React.FC = () => {
       .then(() => fetchBgFiles())
       .catch(() => showToast('⚠️ Xoá file thất bại'));
 
+  /** Đổi chỗ 2 cảnh rồi chốt cứng thứ tự vào tên file (1_, 2_, 3_...). */
+  const moveBg = async (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= bgFiles.length) return;
+    const next = [...bgFiles];
+    [next[index], next[target]] = [next[target], next[index]];
+    setBgFiles(next); // cập nhật ngay cho mượt, sau đó server trả về danh sách chuẩn
+    try {
+      const res = await fetch('/api/images/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: next })
+      });
+      const d = await res.json();
+      if (d.error) showToast('⚠️ ' + d.error);
+    } catch (e: any) {
+      showToast('⚠️ Đổi thứ tự thất bại: ' + e.message);
+    }
+    fetchBgFiles();
+  };
+
   const deleteMusic = (name: string) =>
     fetch('/api/music/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames: [name] }) })
       .then(() => fetchMusicFiles())
@@ -67,6 +192,12 @@ export const Editor: React.FC = () => {
     fetchBgFiles();
     fetchMusicFiles();
   }, []);
+
+  // Ngân hàng ý tưởng phải khớp với mode kịch bản đang chọn (viral/affiliate/digital_aff),
+  // nên tải lại mỗi khi đổi mode để không hiện ý tưởng lệch tông với kịch bản sắp sinh.
+  useEffect(() => {
+    fetchIdeaBank();
+  }, [scriptMode]);
 
   // Poll trạng thái: 1s khi đang render, 5s khi rảnh (đỡ spam server)
   useEffect(() => {
@@ -90,6 +221,9 @@ export const Editor: React.FC = () => {
         showToast('🎉 Video đã xuất xong!');
         // Báo App.tsx refresh danh sách video + stats trên dashboard
         window.dispatchEvent(new CustomEvent('video-completed'));
+        // Sinh sẵn caption + hashtag ngay khi render xong — người dùng chỉ việc copy, khỏi
+        // phải bấm thêm bước nào trước khi sang TikTok đăng.
+        handleGeneratePublishKit(script);
       }
     }
     prevRunningRef.current = running;
@@ -105,11 +239,10 @@ export const Editor: React.FC = () => {
     }, 500);
 
     try {
-      const idea = (document.getElementById('idea_input') as HTMLInputElement).value;
       const res = await fetch('/api/script/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idea, mode: 'viral' })
+        body: JSON.stringify({ idea: ideaInputValue, idea_id: selectedIdeaId, mode: scriptMode, word_cap: wordCap })
       });
       const data = await res.json();
       if (data.error) {
@@ -120,6 +253,8 @@ export const Editor: React.FC = () => {
         setTimeout(() => {
           setScript(data.text);
           localStorage.setItem('editor_script', data.text);
+          setSelectedIdeaId(null);
+          fetchIdeaBank();
         }, 300);
       }
     } catch (e: any) {
@@ -147,11 +282,11 @@ export const Editor: React.FC = () => {
           {toast}
         </div>
       )}
-      {/* Cột 1: Tool Panel */}
+      {/* Cột 1: Cấu hình (đặt 1 lần, ít khi đổi) */}
       <div style={{ width: '300px', display: 'flex', flexDirection: 'column', gap: '1.5rem', overflowY: 'auto', paddingRight: '10px' }}>
         <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--primary)' }}>
-            Giọng đọc AI
+            Cấu hình · Giọng đọc AI
           </h3>
           <select 
             id="voice_select" 
@@ -195,16 +330,6 @@ export const Editor: React.FC = () => {
           </select>
 
           <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--primary)', marginTop: '0.5rem' }}>
-            Trình Render Video (Engine)
-          </h3>
-          <select id="engine_select" className="input-field" style={{ cursor: 'pointer' }}
-                  defaultValue={localStorage.getItem('editor_engine') || "moviepy"}
-                  onChange={(e) => localStorage.setItem('editor_engine', e.target.value)}>
-            <option value="moviepy">MoviePy (Truyền thống)</option>
-            <option value="gsap">GSAP + Playwright (Chữ động mượt mà)</option>
-          </select>
-          
-          <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--primary)', marginTop: '0.5rem' }}>
             Phong cách Phụ đề
           </h3>
           <select id="style_select" className="input-field" style={{ cursor: 'pointer' }}
@@ -230,60 +355,8 @@ export const Editor: React.FC = () => {
         </div>
 
         <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981' }}>
-            Media Nền (Background)
-          </h3>
-          <select id="visual_select" className="input-field" style={{ cursor: 'pointer' }}
-                  defaultValue={localStorage.getItem('editor_visual') || "pexels"}
-                  onChange={(e) => localStorage.setItem('editor_visual', e.target.value)}>
-            <option value="pexels">Video Lofi/Chill (Youtube/Pexels)</option>
-            <option value="mix">Trộn lẫn Video ngẫu nhiên</option>
-            <option value="uploaded">Video tự upload (Folder)</option>
-            <option value="ai">AI Tự vẽ hình tĩnh (Pollinations)</option>
-          </select>
-          
-          {/* Upload background */}
-          <input ref={bgInputRef} type="file" multiple accept=".mp4,.mov,.avi,.mkv,.webm,.jpg,.jpeg,.png,.webp" style={{ display: 'none' }}
-            onChange={e => { if (e.target.files?.length) uploadBg(e.target.files); e.target.value = ''; }} />
-          <button className="glow-btn" style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981', padding: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
-            onClick={() => bgInputRef.current?.click()}>
-            <span className="icon" style={{ fontSize: '16px' }}>upload_file</span>
-            Upload video/ảnh nền
-          </button>
-
-          {bgFiles.length > 0 && (
-            <div style={{ maxHeight: '120px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {bgFiles.map(name => (
-                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px' }}>
-                  <span className="icon" style={{ fontSize: '14px', color: '#10b981', flexShrink: 0 }}>movie</span>
-                  <span style={{ fontSize: '11px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                  <button onClick={() => deleteBg(name)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px', display: 'flex' }}>
-                    <span className="icon" style={{ fontSize: '14px' }}>close</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div>
-            <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Hoặc tải từ Youtube</label>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-              <input type="text" className="input-field" id="yt_url" placeholder="https://youtube.com/..." style={{ flex: 1, fontSize: '12px' }} />
-              <button className="glow-btn" style={{ padding: '8px 12px' }} onClick={() => {
-                const url = (document.getElementById('yt_url') as HTMLInputElement).value;
-                if (!url) return;
-                fetch('/api/background/fetch', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url}) })
-                  .then(() => alert('Đang tải ngầm! Kiểm tra terminal.'));
-              }}>
-                <span className="icon">download</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#f59e0b' }}>
-            Nhạc Nền BGM
+            Cấu hình · Nhạc Nền BGM
           </h3>
           <select id="music_mode_select" className="input-field" style={{ cursor: 'pointer' }}
                   defaultValue={localStorage.getItem('editor_music_mode') || "ai_local"}
@@ -291,6 +364,10 @@ export const Editor: React.FC = () => {
             <option value="ai_local">AI Tự chọn nhạc hợp Mood</option>
             <option value="manual">Không dùng nhạc / Tuỳ chỉnh</option>
           </select>
+          <p style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.4, margin: 0 }}>
+            Khớp mood theo <b>tên file</b> — đặt tên có từ khoá tiếng Anh liên quan (vd <code>calm_piano.mp3</code>,
+            <code>upbeat_motivation.mp3</code>) để chọn đúng hơn. Không file nào khớp thì chọn ngẫu nhiên trong thư viện.
+          </p>
 
           <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#f59e0b', marginTop: '0.5rem' }}>
             Âm lượng Nhạc
@@ -328,19 +405,24 @@ export const Editor: React.FC = () => {
         </div>
       </div>
 
-      {/* Cột 2: Script Workspace */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Cột 2: Quy trình làm video, Bước 1 -> 3 theo thứ tự từ trên xuống */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', position: 'relative' }}>
+           <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--primary)', margin: 0 }}>
+             Bước 1 · Ý tưởng &amp; Kịch bản
+           </h3>
            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-             <input 
+             <input
                id="idea_input"
-               type="text" 
-               className="input-field" 
-               placeholder="Nhập chủ đề video (VD: Sự thật tâm lý học về tình yêu...) hoặc để trống để AI tự nghĩ" 
+               type="text"
+               className="input-field"
+               placeholder="Nhập chủ đề video (VD: mẹo bảo quản hành lá...) hoặc để trống để AI tự nghĩ"
                style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '1rem' }}
+               value={ideaInputValue}
+               onChange={(e) => { setIdeaInputValue(e.target.value); setSelectedIdeaId(null); }}
              />
-             <button 
-               className="glow-btn" 
+             <button
+               className="glow-btn"
                onClick={handleGenerate}
                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 24px' }}
                disabled={isGenerating}
@@ -349,6 +431,81 @@ export const Editor: React.FC = () => {
                {isGenerating ? 'ĐANG TẠO...' : 'AI VIẾT KỊCH BẢN'}
              </button>
            </div>
+
+           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+             <label style={{ fontSize: '11px', color: 'var(--text-muted)', flexShrink: 0 }}>Chế độ kịch bản:</label>
+             <select className="input-field" style={{ fontSize: '12px', flex: '0 0 260px', cursor: 'pointer' }}
+                     value={scriptMode}
+                     onChange={(e) => { setScriptMode(e.target.value); localStorage.setItem('editor_script_mode', e.target.value); }}>
+               <option value="viral">Sự thật/Tâm lý (GĐ1 — xây follower, khuyến nghị)</option>
+               <option value="affiliate">Affiliate sản phẩm vật lý (GĐ2 — cần quay thật)</option>
+               <option value="digital_aff">Affiliate sản phẩm số (app/dịch vụ — không cần quay)</option>
+             </select>
+           </div>
+
+           {/* Trần độ dài kịch bản — đòn bẩy chính cho tỉ lệ xem hết (TikTok 2026 cần ~70%) */}
+           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+             <label style={{ fontSize: '11px', color: 'var(--text-muted)', flexShrink: 0 }}>
+               Độ dài kịch bản:
+             </label>
+             <input
+               type="range" min={25} max={120} step={5} value={wordCap}
+               onChange={(e) => { const v = Number(e.target.value); setWordCap(v); localStorage.setItem('editor_word_cap', String(v)); }}
+               style={{ flex: '0 0 180px', cursor: 'pointer', accentColor: 'var(--primary)' }}
+             />
+             <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary)', minWidth: '116px' }}>
+               {wordCap} từ ≈ {Math.round(wordCap * 5 / 20)}s
+             </span>
+             <span style={{ fontSize: '10px', color: wordCap <= 70 ? '#10b981' : '#f59e0b', lineHeight: 1.4, flex: 1, minWidth: '200px' }}>
+               {wordCap <= 70
+                 ? '✅ Video ngắn → dễ đạt mốc ~70% xem hết, thuật toán dễ đẩy tiếp.'
+                 : '⚠️ Video dài khó đạt mốc ~70% xem hết mà TikTok 2026 yêu cầu — chỉ dùng khi nội dung thật sự cần giải thích dài.'}
+             </span>
+           </div>
+
+           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+             {scriptMode === 'viral' && (
+               <select className="input-field" style={{ fontSize: '12px', flex: '0 0 200px', cursor: 'pointer' }}
+                       value={ideaFormat} onChange={(e) => setIdeaFormat(e.target.value)}>
+                 <option value="">Định dạng bất kỳ</option>
+                 <option value="listicle">Listicle đếm số</option>
+                 <option value="before_after">Trước/Sau nhận thức</option>
+                 <option value="myth_busting">Myth-busting / Sai lầm</option>
+                 <option value="countdown_hook">Đếm ngược giữ chân</option>
+                 <option value="relatable_moment">Khoảnh khắc đồng cảm</option>
+                 <option value="reply_comment">Reply-to-comment</option>
+               </select>
+             )}
+             <button className="glow-btn" style={{ fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                     onClick={handleSuggestIdeas} disabled={isSuggesting}>
+               {isSuggesting ? <span className="icon animate-spin">sync</span> : <span className="icon">lightbulb</span>}
+               {isSuggesting ? 'Đang gợi ý...' : 'Gợi ý ý tưởng'}
+             </button>
+           </div>
+
+           {ideaBank.length > 0 && (
+             <div style={{ maxHeight: '220px', overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+               {ideaBank.map(idea => (
+                 <div key={idea.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', padding: '6px 10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', minWidth: 0 }}>
+                   <span className="icon" style={{ fontSize: '14px', color: 'var(--primary)', flexShrink: 0, marginTop: '2px' }}>lightbulb</span>
+                   <span
+                     onClick={() => handleUseIdea(idea)}
+                     title="Bấm để dùng ý tưởng này"
+                     style={{
+                       fontSize: '12px', flex: 1, minWidth: 0, cursor: 'pointer', lineHeight: 1.4,
+                       display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                     }}
+                   >
+                     {idea.format ? `[${idea.format}] ` : ''}{idea.text}
+                   </span>
+                   <button onClick={() => handleSkipIdea(idea.id)} title="Bỏ qua ý tưởng này" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px', display: 'flex', flexShrink: 0 }}>
+                     <span className="icon" style={{ fontSize: '14px' }}>close</span>
+                   </button>
+                 </div>
+               ))}
+             </div>
+           )}
+
            {isGenerating && (
              <div style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: '3px', background: 'rgba(0,0,0,0.2)', overflow: 'hidden', borderBottomLeftRadius: '12px', borderBottomRightRadius: '12px' }}>
                 <div style={{ width: `${Math.round(genProgress)}%`, height: '100%', background: 'var(--grad-primary)', transition: 'width 0.3s ease-out' }}></div>
@@ -360,7 +517,7 @@ export const Editor: React.FC = () => {
            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--primary)' }} className="animate-pulse"></span>
-                <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>Editor Console</span>
+                <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>Kịch bản (sửa tay được)</span>
              </div>
              <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--primary)', background: 'rgba(147,51,234,0.1)', padding: '4px 12px', borderRadius: '12px' }}>
                {script.length} CHARS
@@ -379,16 +536,127 @@ export const Editor: React.FC = () => {
            />
 
         </div>
+
+        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: 0 }}>
+          <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#3b82f6' }}>
+            Bước 2 · Trợ lý Hoạt hình Veo (thủ công)
+          </h3>
+          <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+            Sinh sẵn prompt tiếng Anh cho từng cảnh, dán vào Google Flow để tạo video bằng Veo (dùng credit gói Gemini Pro của bạn) —
+            audio bật hay tắt trong Flow đều được, không ảnh hưởng credit (đã kiểm chứng thực tế với cả Omni Flash lẫn Veo 3.1) — app chỉ lấy HÌNH từ clip bạn upload, không dùng tiếng gốc trong clip (âm thanh cuối luôn là giọng TTS + nhạc nền riêng của bạn), nên cứ để tuỳ ý,
+            tải video về, đặt tên file bắt đầu bằng số thứ tự cảnh (vd <code>1_...</code>, <code>2_...</code>), rồi upload vào mục
+            "Media Nền" ngay bên dưới — app tự sắp thứ tự cảnh theo thời gian tải file về máy, sai thì chỉnh bằng mũi tên ↑↓.
+          </p>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className="glow-btn"
+              style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.4)', color: '#3b82f6', fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => window.open('https://flow.google', '_blank')}
+            >
+              <span className="icon" style={{ fontSize: '16px' }}>open_in_new</span>
+              Mở Google Flow
+            </button>
+            <button
+              className="glow-btn"
+              style={{ fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={handleGenerateScenePrompts}
+              disabled={isGeneratingScenes}
+            >
+              {isGeneratingScenes ? <span className="icon animate-spin">sync</span> : <span className="icon">movie_filter</span>}
+              {isGeneratingScenes ? 'Đang sinh...' : 'Sinh prompt từng cảnh'}
+            </button>
+          </div>
+
+          {scenePrompts.length > 0 && (
+            <>
+              {recommendedDuration && (
+                <div style={{ padding: '8px 10px', background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px', fontSize: '11px', lineHeight: 1.5 }}>
+                  ⏱️ Mỗi cảnh nên dài <strong>{recommendedDuration} giây</strong> — đã ghép sẵn câu "Video duration: {recommendedDuration} seconds." vào cuối mỗi prompt bên dưới, cứ copy nguyên cả đoạn dán vào Flow là đủ, không cần nói thêm gì nữa.
+                </div>
+              )}
+              <div style={{ maxHeight: '260px', overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0 }}>
+              {scenePrompts.map((scene) => (
+                <div key={scene.index} style={{ padding: '8px 10px', background: 'rgba(59,130,246,0.08)', borderRadius: '8px', minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#3b82f6' }}>
+                      CẢNH {scene.index} — tên file gợi ý: {scene.index}_canh.mp4
+                    </span>
+                    <button
+                      onClick={() => handleCopyScenePrompt(scene.index, scene.prompt)}
+                      style={{ background: 'none', border: '1px solid rgba(59,130,246,0.4)', color: '#3b82f6', cursor: 'pointer', padding: '2px 8px', borderRadius: '6px', fontSize: '10px', flexShrink: 0 }}
+                    >
+                      {copiedSceneIndex === scene.index ? '✅ Đã copy' : '📋 Copy'}
+                    </button>
+                  </div>
+                  <p style={{
+                    fontSize: '12px', margin: 0, lineHeight: 1.4, color: 'var(--text-primary, #eee)',
+                    display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                  }}>
+                    {scene.prompt}
+                  </p>
+                </div>
+              ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981' }}>
+            Bước 3 · Media Nền — thứ tự cảnh
+          </h3>
+          <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+            Upload clip vừa tạo ở Bước 2.
+            Danh sách dưới đây hiển thị <b>đúng thứ tự cảnh sẽ được render</b> — dùng mũi tên ↑↓ để sửa
+            nếu sai.
+          </p>
+
+          {/* Upload background */}
+          <input ref={bgInputRef} type="file" multiple accept=".mp4,.mov,.avi,.mkv,.webm,.jpg,.jpeg,.png,.webp" style={{ display: 'none' }}
+            onChange={e => { if (e.target.files?.length) uploadBg(e.target.files); e.target.value = ''; }} />
+          <button className="glow-btn" style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981', padding: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
+            onClick={() => bgInputRef.current?.click()}>
+            <span className="icon" style={{ fontSize: '16px' }}>upload_file</span>
+            Upload video/ảnh nền
+          </button>
+
+          {bgFiles.length > 0 && (
+            <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {bgFiles.map((name, i) => (
+                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                  <span style={{
+                    flexShrink: 0, width: '18px', height: '18px', borderRadius: '5px',
+                    background: 'rgba(16,185,129,0.2)', color: '#10b981',
+                    fontSize: '10px', fontWeight: 900,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>{i + 1}</span>
+                  <span style={{ fontSize: '11px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                  <button onClick={() => moveBg(i, -1)} disabled={i === 0} title="Lên trước 1 cảnh"
+                    style={{ background: 'none', border: 'none', color: i === 0 ? 'var(--text-muted)' : '#10b981', cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? 0.3 : 1, padding: 0, display: 'flex' }}>
+                    <span className="icon" style={{ fontSize: '15px' }}>arrow_upward</span>
+                  </button>
+                  <button onClick={() => moveBg(i, 1)} disabled={i === bgFiles.length - 1} title="Lùi sau 1 cảnh"
+                    style={{ background: 'none', border: 'none', color: i === bgFiles.length - 1 ? 'var(--text-muted)' : '#10b981', cursor: i === bgFiles.length - 1 ? 'default' : 'pointer', opacity: i === bgFiles.length - 1 ? 0.3 : 1, padding: 0, display: 'flex' }}>
+                    <span className="icon" style={{ fontSize: '15px' }}>arrow_downward</span>
+                  </button>
+                  <button onClick={() => deleteBg(name)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+                    <span className="icon" style={{ fontSize: '14px' }}>close</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Cột 3: Preview Panel */}
+      {/* Cột 3: Bước 4 -> 5 — xuất video rồi đăng */}
       <div style={{ width: '350px', display: 'flex', flexDirection: 'column', gap: '1.5rem', height: '100%' }}>
          <div className="glass-card" style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', position: 'relative' }}>
             <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--primary)' }}>
-               Preview & Xuất Video
+               Bước 4 · Preview & Xuất Video
             </h3>
             
-            <div style={{ width: '100%', aspectRatio: '9/16', background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-subtle)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '1rem' }}>
+            <div style={{ width: '100%', aspectRatio: '9/16', flexShrink: 0, background: 'var(--bg-card)', borderRadius: '12px', border: '1px solid var(--border-subtle)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '1rem' }}>
                {pipelineStatus?.output_file ? (
                  <video src={`/media/${pipelineStatus.output_file}`} controls autoPlay style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }} />
                ) : (
@@ -398,6 +666,98 @@ export const Editor: React.FC = () => {
                  </div>
                )}
             </div>
+
+            {pipelineStatus?.output_file && !pipelineStatus?.running && (
+              <div style={{ padding: '1rem', borderRadius: '12px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981', margin: 0 }}>
+                    Bước 5 · Đăng lên TikTok
+                  </h3>
+                  <button
+                    onClick={() => handleGeneratePublishKit(script)}
+                    disabled={isGeneratingKit}
+                    title="Sinh lại caption khác"
+                    style={{ background: 'transparent', border: 'none', color: '#10b981', cursor: isGeneratingKit ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', padding: 0 }}
+                  >
+                    <span className="icon" style={{ fontSize: '16px' }}>{isGeneratingKit ? 'sync' : 'refresh'}</span>
+                  </button>
+                </div>
+
+                {/* B1: tải video + ảnh bìa. Nhạc trending chỉ gắn được bằng APP điện thoại
+                    (web không có "Add sound"), nên hướng chính là chuyển file sang điện thoại. */}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <a
+                    href={`/media/${pipelineStatus.output_file}`}
+                    download
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', textDecoration: 'none', fontSize: '12px', fontWeight: 700 }}
+                  >
+                    <span className="icon" style={{ fontSize: '16px', color: '#10b981' }}>download</span>
+                    1. Tải video
+                  </a>
+                  <a
+                    href={`/media/${pipelineStatus.output_file.replace(/\.mp4$/, '_cover.jpg')}`}
+                    download
+                    title="Ảnh bìa sinh sẵn — đặt làm cover khi đăng"
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px 8px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', textDecoration: 'none', fontSize: '12px', fontWeight: 700 }}
+                  >
+                    <span className="icon" style={{ fontSize: '16px', color: '#10b981' }}>image</span>
+                    Ảnh bìa
+                  </a>
+                </div>
+
+                {/* B2: caption + hashtag sinh sẵn, copy 1 chạm */}
+                <div>
+                  <div style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>
+                    2. Caption + hashtag
+                  </div>
+                  {isGeneratingKit && !publishKit ? (
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', padding: '10px 0' }}>Đang sinh caption...</div>
+                  ) : publishKit ? (
+                    <>
+                      <div style={{ fontSize: '12px', lineHeight: 1.5, background: 'rgba(0,0,0,0.25)', borderRadius: '8px', padding: '10px', border: '1px solid var(--border-subtle)', whiteSpace: 'pre-wrap', maxHeight: '120px', overflowY: 'auto' }}>
+                        {publishKit.full_caption}
+                      </div>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(publishKit.full_caption).then(() => showToast('✅ Đã copy caption + hashtag'))}
+                        style={{ marginTop: '6px', width: '100%', padding: '8px', borderRadius: '8px', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', color: '#10b981', cursor: 'pointer', fontSize: '11px', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                      >
+                        <span className="icon" style={{ fontSize: '14px' }}>content_copy</span>
+                        COPY CAPTION + HASHTAG
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => handleGeneratePublishKit(script)}
+                      style={{ width: '100%', padding: '8px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', cursor: 'pointer', fontSize: '11px', fontWeight: 700 }}
+                    >
+                      Sinh caption + hashtag
+                    </button>
+                  )}
+                </div>
+
+                {/* B3: mở thẳng trang upload TikTok */}
+                <a
+                  href="https://www.tiktok.com/tiktokstudio/upload"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 12px', borderRadius: '8px', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', color: '#10b981', textDecoration: 'none', fontSize: '12px', fontWeight: 800 }}
+                >
+                  <span className="icon" style={{ fontSize: '16px' }}>open_in_new</span>
+                  3. MỞ TIKTOK ĐỂ ĐĂNG
+                </a>
+
+                {/* Checklist cài đặt bắt buộc — sai 1 trong số này là bóp reach hoặc vi phạm chính sách */}
+                <div style={{ fontSize: '11px', lineHeight: 1.7, color: 'var(--text-muted)', borderTop: '1px solid rgba(16,185,129,0.15)', paddingTop: '8px' }}>
+                  <div style={{ fontWeight: 800, color: '#f59e0b', marginBottom: '4px' }}>⚠️ Bật khi đăng:</div>
+                  <div>• <strong style={{ color: 'var(--text-main)' }}>Quyền riêng tư = Everyone</strong> — để "Only me" thì không ai xem được, 0 view.</div>
+                  <div>• <strong style={{ color: 'var(--text-main)' }}>Nhãn AI (AI-generated content)</strong> — bắt buộc vì dùng giọng AI. Tự bật thì gần như không mất reach; để TikTok tự phát hiện thì mất reach nặng + có thể bị phạt.</div>
+                  <div>• <strong style={{ color: 'var(--text-main)' }}>Ảnh bìa</strong>: chọn "Tải lên" rồi chọn file <code>_cover.jpg</code> vừa tải ở trên. Sửa bìa sau khi đăng chỉ được trong <strong style={{ color: 'var(--text-main)' }}>7 ngày</strong>.</div>
+                  <div>• <strong style={{ color: 'var(--text-main)' }}>Vị trí</strong>: Hà Nội hoặc TP.HCM. <strong style={{ color: 'var(--text-main)' }}>Giờ vàng</strong>: 11–13h hoặc 18–21h.</div>
+                  <div>• Cho phép <strong style={{ color: 'var(--text-main)' }}>bình luận / duet / stitch</strong>. Đăng <strong style={{ color: 'var(--text-main)' }}>1–2 video/ngày</strong>.</div>
+                  <div style={{ marginTop: '4px', color: '#f59e0b' }}>🎵 Muốn gắn <strong>nhạc trending</strong> thì phải đăng bằng <strong>APP điện thoại</strong> (web không có "Add sound"), và nên chọn "Không dùng nhạc" ở phần BGM để tránh chồng 2 lớp nhạc.</div>
+                </div>
+              </div>
+            )}
 
             <div style={{ flex: 1 }}></div>
 
@@ -444,23 +804,19 @@ export const Editor: React.FC = () => {
                   const rate = (document.getElementById('rate_select') as HTMLSelectElement).value;
                   const style = parseInt((document.getElementById('style_select') as HTMLSelectElement).value);
                   const position = (document.getElementById('position_select') as HTMLSelectElement).value;
-                  const engine = (document.getElementById('engine_select') as HTMLSelectElement).value;
-                  const visual = (document.getElementById('visual_select') as HTMLSelectElement).value;
                   const music_mode = (document.getElementById('music_mode_select') as HTMLSelectElement).value;
                   const music_volume = parseFloat((document.getElementById('music_volume_select') as HTMLSelectElement).value);
-                  
+
                   fetch('/api/pipeline/start', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                      script, 
-                      voice, 
+                    body: JSON.stringify({
+                      script,
+                      voice,
                       rate,
-                      style, 
+                      style,
                       position,
-                      engine,
-                      visual_mode: visual, 
                       music_mode,
-                      music_volume 
+                      music_volume
                     })
                   }).then(() => {
                     setPipelineStatus({ running: true, progress: 0, message: "Bắt đầu tiến trình..." });

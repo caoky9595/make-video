@@ -12,10 +12,14 @@
   
   /* Primary Vibrant Colors (Purple/Indigo theme) */
   --primary: #9333ea;
+  --primary-rgb: 147, 51, 234;
   --primary-glow: rgba(147, 51, 234, 0.5);
   --secondary: #4f46e5;
   --accent: #ec4899;
-  
+
+  /* Nền khối card/placeholder (vd khung thumbnail video chưa có ảnh bìa) */
+  --bg-card: var(--surface);
+
   /* Text Colors */
   --text-main: #f8fafc;
   --text-muted: #94a3b8;

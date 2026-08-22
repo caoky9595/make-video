@@ -1,35 +1,19 @@
 """
-bg_finder.py - Auto Background Video Finder (Pexels API)
-=========================================================
-Tự động tìm và tải video nền phù hợp với nội dung kịch bản từ Pexels.
-API Key miễn phí, không giới hạn, không watermark.
-
-Đăng ký API Key tại: https://www.pexels.com/api/
+bg_finder.py - AI Scene Prompt Helper
+======================================
+Gọi Gemini (tự chuyển sang Groq nếu Gemini hết quota) để: tách kịch bản thành từng câu và
+sinh prompt tiếng Anh nhất quán cho mỗi cảnh — dùng cho trợ lý "Hoạt hình Veo thủ công"
+(người dùng tự dán prompt vào Google Flow để tạo video bằng Veo).
 """
 
 import os
 import re
-import requests
-import random
-import urllib.parse
 from dotenv import load_dotenv
 from core.utils.logger_config import logger
 
 # Tải biến môi trường từ file .env
 load_dotenv()
 
-PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
-
-# Cấu hình Video Nền Thôi Miên (Satisfying Loops) dành riêng cho Kênh kể truyện
-# Thay vì lấy cảnh văn phòng nhàm chán, hệ thống sẽ ưu tiên trích xuất Lofi chill
-# Fallback: Ưu tiên video Cinematic nếu Gemini lỗi
-FALLBACK_KEYWORDS = [
-    "cinematic landscape 4k",
-    "abstract colorful motion",
-    "calm nature 4k vertical",
-    "cyberpunk city aesthetic",
-    "minimalist clean background",
-]
 
 def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 2, initial_delay: float = 1.0) -> dict:
     """Gọi Gemini API bằng urllib với cơ chế retry nhanh."""
@@ -37,14 +21,14 @@ def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 2, initia
     import urllib.error
     import json
     import time
-    
+
     delay = initial_delay
     last_err = None
-    
+
     for attempt in range(max_retries):
         req = urllib.request.Request(
-            url, 
-            data=json.dumps(payload).encode("utf-8"), 
+            url,
+            data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"}
         )
         try:
@@ -63,395 +47,259 @@ def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 2, initia
             time.sleep(delay)
             delay *= 2
             continue
-            
+
     if last_err:
         raise last_err
     raise RuntimeError("Không thể kết nối tới Gemini API")
 
 
-def extract_fallback_keywords_locally(script_text: str) -> list:
-    """Phân tích kịch bản bằng tiếng Việt bằng luật heuristic để trả về từ khóa tiếng Anh phù hợp khi Gemini lỗi."""
-    text_lower = script_text.lower()
-    
-    # 1. Nhóm Ẩm thực / Nhà bếp / Mẹo nấu ăn
-    cooking_keywords = [
-        "hành", "tỏi", "ớt", "rau", "nấu", "bếp", "thịt", "cá", "món", "ăn", "ngon", 
-        "gia vị", "chảo", "nồi", "nướng", "chiên", "xào", "luộc", "hấp", "tủ lạnh",
-        "thái nhỏ", "bảo quản", "ẩm thực", "ăn uống", "dưa", "cà", "muối", "canh"
-    ]
-    if any(kw in text_lower for kw in cooking_keywords):
-        return [
-            "cooking aesthetic vertical",
-            "fresh vegetables kitchen vertical",
-            "chopping vegetables vertical",
-            "chef cooking close up vertical",
-            "pouring food plate vertical"
-        ]
-        
-    # 2. Nhóm Kinh doanh / Tài chính / Kiếm tiền / Affiliate
-    business_keywords = [
-        "kinh doanh", "tiền", "giàu", "bán", "mua", "khách", "doanh số", "doanh thu",
-        "triệu phú", "tỷ phú", "đầu tư", "tài chính", "kiếm tiền", "sự nghiệp", "thành công",
-        "marketing", "affiliate", "sản phẩm", "đơn hàng", "tài sản", "tiết kiệm"
-    ]
-    if any(kw in text_lower for kw in business_keywords):
-        return [
-            "luxury workspace setup vertical",
-            "typing on mechanical keyboard aesthetic vertical",
-            "cinematic city lights night timelapse vertical",
-            "business meeting office vertical",
-            "stacks of dollars cash vertical"
-        ]
-        
-    # 3. Nhóm Kể chuyện / Tâm sự / ASMR / Satisfying
-    lofi_asmr_keywords = [
-        "kể chuyện", "tâm sự", "ngày xưa", "cuộc sống", "bình yên", "hạnh phúc", "gia đình",
-        "tình yêu", "nỗi buồn", "chia sẻ", "bài học", "triết lý", "tâm lý", "suy ngẫm",
-        "thư giãn", "ngủ ngon", "lắng nghe", "chữa lành"
-    ]
-    if any(kw in text_lower for kw in lofi_asmr_keywords):
-        return [
-            "oddly satisfying kinetic sand cutting vertical",
-            "satisfying ASMR cleaning vertical",
-            "soap slicing vertical",
-            "rainy window cozy lofi desk vertical",
-            "moody warm desk lamp aesthetic vertical"
-        ]
-        
-    # 4. Mặc định nếu không khớp nhóm nào cụ thể
-    return [
-        "cinematic landscape 4k vertical",
-        "minimalist clean background vertical",
-        "abstract colorful motion vertical"
-    ]
+def call_groq(prompt: str, json_mode: bool = False, model: str = "openai/gpt-oss-120b") -> str:
+    """Gọi Groq (miễn phí ~14.400 request/ngày) bằng API OpenAI-compatible.
+
+    Cần biến môi trường GROQ_API_KEY (đăng ký miễn phí tại console.groq.com).
+    Trả về text thô — caller tự json.loads nếu json_mode=True.
+    """
+    import urllib.request
+    import json as json_lib
+
+    groq_key = os.environ.get("GROQ_API_KEY")
+    if not groq_key:
+        raise RuntimeError("Chưa cấu hình GROQ_API_KEY trong .env (đăng ký miễn phí tại console.groq.com)")
+
+    full_prompt = prompt
+    if json_mode:
+        full_prompt += "\n\nCHỈ TRẢ VỀ JSON hợp lệ, không kèm giải thích hay markdown code fence."
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": full_prompt}],
+        "temperature": 0.8,
+    }
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=json_lib.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {groq_key}",
+            # Cloudflare (đứng trước Groq) chặn request thiếu User-Agent (403) — cùng nguyên
+            # nhân đã gặp với Pollinations.
+            "User-Agent": "Mozilla/5.0 (compatible; VideoMakerBot/1.0)",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        result = json_lib.loads(response.read().decode("utf-8"))
+    text = result["choices"][0]["message"]["content"].strip()
+    if json_mode:
+        # Groq đôi khi bọc JSON trong ```json ... ``` dù đã dặn không làm vậy — bóc ra nếu có.
+        text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text).strip()
+    return text
 
 
-def generate_visual_keywords_with_gemini(script_text):
-    """Sử dụng Gemini để phân tích kịch bản và sinh từ khóa Pexels/Pollinations phù hợp với chủ đề thực tế."""
+def call_llm_with_fallback(prompt: str, json_mode: bool = False) -> str:
+    """Gọi Gemini trước; nếu lỗi (hết quota 20 request/ngày free tier, rate limit...) thì tự
+    động chuyển sang Groq để tính năng (sinh ý tưởng/kịch bản/prompt cảnh) không bị gián đoạn
+    cả ngày. Trả về text thô — caller tự json.loads nếu json_mode=True.
+    """
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return extract_fallback_keywords_locally(script_text)
-        
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
-    prompt = f"""Bạn là một chuyên gia thiết kế hình ảnh TikTok triệu view.
-    Hãy phân tích kịch bản dưới đây và đề xuất 5 cụm từ tìm kiếm video/hình ảnh (bằng tiếng Anh) chi tiết, mang tính thẩm mỹ cao.
-    
-    Hướng dẫn phân loại & định cách thẩm mỹ:
-    1. Nếu kịch bản là KỂ CHUYỆN ĐỜI SỐNG, TÂM SỰ: Từ khóa đề xuất phải là video ASMR cuốn hút mắt (ví dụ: 'oddly satisfying kinetic sand cutting vertical', 'satisfying ASMR cleaning vertical', 'soap slicing vertical').
-    2. Nếu kịch bản về TRIẾT LÝ, TÂM LÝ HỌC: Từ khóa có chiều sâu, lofi, hoài cổ (ví dụ: 'ancient greek statue dynamic shadow vertical', 'moody warm desk lamp aesthetic vertical', 'rainy window cozy lofi desk vertical').
-    3. Nếu kịch bản về TIỀN BẠC, THÀNH CÔNG, AFFILIATE: Từ khóa sang trọng, tạo động lực (ví dụ: 'luxury workspace setup vertical', 'typing on mechanical keyboard aesthetic vertical', 'cinematic city lights night timelapse vertical').
-    4. Nếu kịch bản về MẸO VẶT CUỘC SỐNG, NẤU ĂN, GIA ĐÌNH, ĐỒ CHƠI (hoặc các chủ đề thực tế khác): Từ khóa phải cực kỳ sát với chủ đề thực tế trong kịch bản (ví dụ: mẹo hành lá -> 'fresh green onions kitchen vertical', 'aesthetic healthy cooking vertical', 'chopping vegetables close up vertical').
-    
-    Yêu cầu:
-    - Luôn thêm từ khóa phụ trợ như 'vertical' hoặc 'portrait' vào từ khóa để tìm video dọc.
-    - Trả về kết quả dưới dạng JSON array duy nhất: ["keyword1", "keyword2", ...]
-
-    Kịch bản: {script_text[:1200]}
-    """
-    
-    import json
-    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"response_mime_type": "application/json"}}
-    
-    try:
-        result = call_gemini_with_retry(url, payload, max_retries=2, initial_delay=1.0)
-        content = result["candidates"][0]["content"]["parts"][0]["text"]
-        keywords = json.loads(content)
-        return keywords if isinstance(keywords, list) else extract_fallback_keywords_locally(script_text)
-    except Exception as e:
-        logger.info(f"  [AI Keywords] Error: {e}. Falling back to smart local keywords.")
-        return extract_fallback_keywords_locally(script_text)
-
-def download_ai_image(prompt, output_dir="backgrounds"):
-    """Tạo và tải ảnh AI từ Pollinations.ai (Miễn phí, không giới hạn)."""
-    os.makedirs(output_dir, exist_ok=True)
-    import random
-    import urllib.parse
-    import time
-    
-    # Làm cho prompt đa dạng và sang trọng hơn cho Affiliate
-    seed = random.randint(1, 999999)
-    # Thêm các modifier để ảnh trông "đắt tiền" và "sạch sẽ" hơn
-    aesthetic_modifiers = "high-end photography, soft lighting, minimalist, clean composition, 8k resolution, cinematic color grading, vertical 9:16"
-    safe_prompt = urllib.parse.quote(f"{prompt}, {aesthetic_modifiers}")
-    # Bỏ tham số width/height lớn để tránh lỗi 402 Payment Required từ Pollinations.ai
-    url = f"https://image.pollinations.ai/prompt/{safe_prompt}?seed={seed}&nologo=true"
-    
-    filename = f"ai_image_{seed}.jpg"
-    filepath = os.path.join(output_dir, filename)
-    
-    logger.info(f"  [AI Image] Generating: {filename} for '{prompt}'...")
-    
-    # Cơ chế retry nếu gặp rate limit/queue full (HTTP 402)
-    max_retries = 3
-    delay = 2.0
-    for attempt in range(max_retries):
-        try:
-            resp = requests.get(url, timeout=30)
-            if resp.status_code == 402:
-                logger.warning(f"  [AI Image] IP queue full (402). Retrying in {delay}s...")
-                time.sleep(delay)
-                delay *= 2
-                continue
-            resp.raise_for_status()
-            with open(filepath, "wb") as f:
-                f.write(resp.content)
-            logger.info(f"  [AI Image] ✅ Saved: {filename}")
-            return filepath
-        except Exception as e:
-            if attempt == max_retries - 1:
-                logger.info(f"  [AI Image] Error: {e}")
-                return None
-            logger.warning(f"  [AI Image] Request failed ({e}). Retrying in {delay}s...")
-            time.sleep(delay)
-            delay *= 2
-    return None
-
-
-def get_api_key():
-    """Lấy Pexels API key từ biến môi trường (.env)."""
-    api_key = os.getenv("PEXELS_API_KEY", "")
-
-    if not api_key:
-        logger.info("\n🔑 Cần Pexels API Key (miễn phí) để tự động tìm video nền.")
-        logger.info("   Đăng ký tại: https://www.pexels.com/api/")
-        logger.info("   Vui lòng thêm PEXELS_API_KEY vào file .env của bạn.\n")
-        logger.info("   ⚠️  Không có API Key. Sẽ dùng video nền có sẵn trong backgrounds/")
-        return None
-
-    return api_key
-
-
-def extract_keywords(script_text: str, max_keywords: int = 3):
-    """
-    Trích xuất từ khoá tiếng Anh từ kịch bản tiếng Việt để search trên Pexels.
-    """
-    script_lower = script_text.lower()
-    matched = []
-
-    # Tìm từ khoá mapping (Dùng regex để tránh bắt chữ chứa bên trong, VD: 'mạng' -> 'ma')
-    import re
-    for vn_regex, en_word in KEYWORD_MAP.items():
-        if re.search(vn_regex, script_lower):
-            matched.append(en_word)
-            if len(matched) >= max_keywords:
-                break
-
-    if not matched:
-        # Fallback: dùng lofi mặc định
-        import random
-        matched = [random.choice(FALLBACK_KEYWORDS)]
-
-    return matched
-
-
-def search_pixabay_videos(query: str, api_key: str, per_page: int = 5):
-    """Tìm video trên Pixabay API."""
-    if not api_key: return []
-    url = "https://pixabay.com/api/videos/"
-    params = {
-        "key": api_key,
-        "q": query,
-        "video_type": "all",
-        "per_page": per_page
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=15)
-        data = resp.json()
-        return data.get("hits", [])
-    except Exception:
-        return []
-
-def search_pexels_videos(query: str, api_key: str, orientation: str = "portrait", per_page: int = 5, exclude_ids=None):
-    """
-    Tìm video trên Pexels API và loại trừ các video đã sử dụng.
-    """
-    url = "https://api.pexels.com/videos/search"
-    headers = {"Authorization": api_key}
-    
-    # Nếu có exclude_ids, yêu cầu nhiều kết quả hơn để sau khi lọc vẫn đủ dùng
-    query_limit = 15 if exclude_ids else per_page
-    params = {
-        "query": query,
-        "orientation": orientation,
-        "per_page": query_limit,
-        "size": "medium",
-    }
-
-    try:
-        resp = requests.get(url, headers=headers, params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        videos = data.get("videos", [])
-        if exclude_ids:
-            videos = [v for v in videos if v.get("id") not in exclude_ids]
-        return videos[:per_page]
-    except Exception as e:
-        logger.info(f"  [Pexels] Error searching: {e}")
-        return []
-
-
-def download_pixabay_video(video_data: dict, output_dir: str = "backgrounds"):
-    """Tải video từ Pixabay."""
-    videos = video_data.get("videos", {})
-    # Ưu tiên bản medium hoặc small mp4
-    best_v = videos.get("medium") or videos.get("small") or videos.get("tiny")
-    if not best_v: return None
-    
-    video_url = best_v["url"]
-    filename = f"pixabay_{video_data['id']}.mp4"
-    filepath = os.path.join(output_dir, filename)
-    
-    if os.path.exists(filepath): return filepath
-    
-    try:
-        resp = requests.get(video_url, stream=True, timeout=60)
-        with open(filepath, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-        return filepath
-    except Exception:
-        return None
-
-def download_video(video_data: dict, output_dir: str = "backgrounds"):
-    """
-    Tải video từ Pexels về thư mục backgrounds.
-
-    Args:
-        video_data: Video object từ Pexels API
-        output_dir: Thư mục lưu video
-
-    Returns:
-        Đường dẫn file đã tải, hoặc None nếu thất bại
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Tìm file video chất lượng dọc cao cấp
-    video_files = video_data.get("video_files", [])
-    best_file = None
-
-    # Lần 1: Tìm video dọc Full HD trở lên (h > w và h >= 1080)
-    for vf in video_files:
-        w = vf.get("width", 0)
-        h = vf.get("height", 0)
-        if vf.get("file_type") == "video/mp4" and h > w and h >= 1080:
-            best_file = vf
-            break
-
-    # Lần 2: Tìm video dọc HD (h > w và h >= 720)
-    if not best_file:
-        for vf in video_files:
-            w = vf.get("width", 0)
-            h = vf.get("height", 0)
-            if vf.get("file_type") == "video/mp4" and h > w and h >= 720:
-                best_file = vf
-                break
-
-    # Lần 3: Tìm video dọc bất kỳ
-    if not best_file:
-        for vf in video_files:
-            w = vf.get("width", 0)
-            h = vf.get("height", 0)
-            if vf.get("file_type") == "video/mp4" and h > w:
-                best_file = vf
-                break
-
-    # Lần 4: Fallback lấy file mp4 đầu tiên
-    if not best_file:
-        for vf in video_files:
-            if vf.get("file_type") == "video/mp4":
-                best_file = vf
-                break
-
-    if not best_file:
-        logger.info("  [Pexels] No suitable video file found.")
-        return None
-
-    video_url = best_file["link"]
-    video_id = video_data.get("id", "unknown")
-    filename = f"pexels_{video_id}.mp4"
-    filepath = os.path.join(output_dir, filename)
-
-    # Không tải lại nếu đã có
-    if os.path.exists(filepath):
-        logger.info(f"  [Pexels] Already downloaded: {filename}")
-        return filepath
-
-    logger.info(f"  [Pexels] Downloading: {filename} ({best_file.get('width')}x{best_file.get('height')})...")
-
-    try:
-        resp = requests.get(video_url, stream=True, timeout=60)
-        resp.raise_for_status()
-        with open(filepath, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-        size_mb = os.path.getsize(filepath) / (1024 * 1024)
-        logger.info(f"  [Pexels] ✅ Downloaded: {filename} ({size_mb:.1f} MB)")
-        return filepath
-    except Exception as e:
-        logger.info(f"  [Pexels] Download failed: {e}")
-        return None
-
-
-def find_and_download_background(script_text: str, output_dir: str = "backgrounds", max_downloads: int = 5):
-    """
-    Hàm chính nâng cấp: Nạp used_backgrounds.json -> Gemini Keywords -> Pexels Video (Lọc trùng) -> Pollinations AI Image (Fallback/Mix).
-    """
-    api_key = get_api_key()
-    
-    # Nạp danh sách IDs đã sử dụng từ used_backgrounds.json
-    used_ids = []
-    used_bg_file = "used_backgrounds.json"
-    if os.path.exists(used_bg_file):
-        try:
-            import json
-            with open(used_bg_file, "r") as f:
-                used_ids = json.load(f)
-                if not isinstance(used_ids, list):
-                    used_ids = []
-            logger.info(f"  [Visual Engine] Đã nạp {len(used_ids)} video IDs đã dùng để loại trừ.")
-        except Exception as e:
-            logger.info(f"  [Visual Engine] ⚠️ Không thể nạp used_backgrounds.json: {e}")
-    
-    # 1. Dùng Gemini để tạo từ khóa xịn
-    logger.info("  [AI Visual] Đang phân tích kịch bản bằng Gemini...")
-    keywords = generate_visual_keywords_with_gemini(script_text)
-    logger.info(f"  [AI Visual] Từ khóa đề xuất: {keywords}")
-
-    downloaded = []
-    
-    # 2. Thử tìm Video trên Pexels trước (truyền exclude_ids=used_ids)
     if api_key:
-        for keyword in keywords[:3]: # Thử 3 từ khóa đầu cho video
-            logger.info(f"  [Pexels] Đang tìm video cho: '{keyword}'...")
-            videos = search_pexels_videos(keyword, api_key, per_page=3, exclude_ids=used_ids)
-            
-            for video in videos:
-                path = download_video(video, output_dir)
-                if path:
-                    downloaded.append(path)
-                    if len(downloaded) >= 3: # Lấy tối đa 3 video thực tế
-                        break
-            if len(downloaded) >= 3:
-                break
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
+            payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.8}}
+            if json_mode:
+                payload["generationConfig"]["response_mime_type"] = "application/json"
+            result = call_gemini_with_retry(url, payload, max_retries=2, initial_delay=1.0)
+            return result["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            logger.warning(f"  [LLM Fallback] Gemini lỗi ({e}), chuyển sang Groq...")
 
-    # 3. Luôn tạo thêm 2-3 Ảnh AI để đảm bảo tính độc nhất và không bị lặp
-    logger.info("  [AI Image] Đang tạo thêm ảnh AI để video không bị nhàm chán...")
-    for keyword in keywords[-3:]: # Dùng các từ khóa còn lại cho ảnh AI
-        path = download_ai_image(keyword, output_dir)
-        if path:
-            downloaded.append(path)
-        if len(downloaded) >= max_downloads:
-            break
+    return call_groq(prompt, json_mode=json_mode)
 
-    if downloaded:
-        logger.info(f"\n  [Visual Engine] ✅ Đã chuẩn bị {len(downloaded)} tài nguyên (Video thực tế + Ảnh AI).")
+
+def split_script_into_sentences(script_text: str) -> list:
+    """Tách kịch bản thô thành danh sách câu, cùng quy tắc tách câu với
+    `tiktok_tts.py::generate_tiktok_tts` (chỉ tách tại .!?\\n, không tách tại dấu phẩy).
+    Dùng cho timing phụ đề — KHÔNG dùng trực tiếp để quyết định số cảnh Flow (xem
+    `group_script_into_scenes`), vì 1 câu văn không nhất thiết = 1 cảnh quay có nghĩa.
+    """
+    pieces = re.split(r'[.!?\n]+', script_text)
+    return [p.strip() for p in pieces if p.strip()]
+
+
+# Model video đang dùng (Veo 3.1 Lite) chỉ nhận đúng 3 mốc độ dài này mỗi lần tạo clip — tối đa
+# 8 giây, KHÔNG phải 10s như Omni Flash (xác nhận thực tế 21/08/2026, khác nghiên cứu ban đầu).
+# Vì đây là hội thoại (không có dropdown), người dùng phải NÓI rõ mốc này trong chat trước khi
+# bấm phê duyệt.
+FLOW_DURATION_OPTIONS = [4, 6, 8]
+CHARS_PER_SECOND_ESTIMATE = 20  # tốc độ đọc TTS tiếng Việt ước lượng (đo thực tế edge-tts
+# +50% ra ~24 ký tự/giây; lấy thấp hơn 1 chút cho an toàn vì TikTok TTS có chèn khoảng lặng
+# giữa các câu, đọc chậm hơn edge-tts).
+
+
+SCENE_EFFORT_PENALTY_SEC = 3  # mỗi cảnh thêm = 1 lần thao tác tay thật trên Flow (dán prompt,
+# chờ, tải) — quy đổi thành "phạt" tương đương vài giây lãng phí, để thuật toán không chọn
+# nhiều cảnh ngắn chỉ để tiết kiệm vài giây audio thừa (trần độ dài càng thấp, càng dễ xảy ra
+# nếu chỉ tối ưu lãng phí thuần tuý mà không tính công sức thao tác tay).
+
+
+def estimate_scenes_and_duration(script_text: str, min_scenes: int = 1, max_scenes: int = 5) -> tuple:
+    """Ước lượng (số cảnh, độ dài mỗi cảnh) hợp lý dựa trên ĐỘ DÀI AUDIO ước tính của kịch bản,
+    không phải số câu trong văn bản — vì mỗi cảnh = 1 lần tạo clip Flow, và clip chỉ có vài mốc độ
+    dài cố định (FLOW_DURATION_OPTIONS). Duyệt mọi cặp (số cảnh, độ dài) khả thi, chọn cặp có
+    điểm (lãng phí + phạt theo số cảnh) THẤP NHẤT — ưu tiên ÍT CẢNH hơn thay vì chỉ khớp giây
+    tuyệt đối, vì công sức thao tác tay thực tế đáng kể hơn nhiều so với vài giây audio dư ra.
+    Trả về (số_cảnh, độ_dài_giây).
+    """
+    estimated_seconds = len(script_text) / CHARS_PER_SECOND_ESTIMATE
+    best = None  # (score, so_canh) -> (so_canh, do_dai)
+    for n in range(min_scenes, max_scenes + 1):
+        for d in FLOW_DURATION_OPTIONS:
+            total = n * d
+            if total < estimated_seconds:
+                continue  # không đủ che audio, loại
+            waste = total - estimated_seconds
+            score = waste + n * SCENE_EFFORT_PENALTY_SEC
+            if best is None or score < best[0]:
+                best = (score, n, d)
+    if best is None:
+        # Audio quá dài so với mọi tổ hợp thử (hiếm, kịch bản rất dài) — dùng max cảnh + mốc dài nhất.
+        return max_scenes, FLOW_DURATION_OPTIONS[-1]
+    return best[1], best[2]
+
+
+def estimate_ideal_scene_count(script_text: str, min_scenes: int = 1, max_scenes: int = 5) -> int:
+    """Chỉ lấy số cảnh từ `estimate_scenes_and_duration` — dùng khi không cần độ dài đi kèm."""
+    n, _ = estimate_scenes_and_duration(script_text, min_scenes, max_scenes)
+    return n
+
+
+def group_script_into_scenes(script_text: str, max_scenes: int = None) -> list:
+    """Gộp các câu liên tiếp thành 1 số cảnh hợp lý (ước lượng theo độ dài audio thực tế qua
+    `estimate_ideal_scene_count`, xem ở trên để hiểu vì sao không dùng số câu trong văn bản),
+    thay vì tách 1 cảnh/câu.
+
+    Mỗi cảnh = 1 lần người dùng phải tự tạo clip trên Google Flow, nên tách quá vụn (1 câu
+    ngắn/cảnh, như `split_script_into_sentences` trả về) khiến thao tác thừa và mỗi cảnh chỉ
+    còn vài từ nội dung — không khớp cấu trúc Hook->Demo->Chốt (2-5 cảnh/video) khuyến nghị ở
+    `docs/content_ideas_bank.md`. Câu đầu luôn là Hook, câu cuối luôn là Chốt/CTA (đúng cấu
+    trúc kịch bản đang dùng), các câu giữa được gộp đều vào các cảnh Demo còn lại.
+    """
+    if max_scenes is None:
+        max_scenes = estimate_ideal_scene_count(script_text)
+
+    sentences = split_script_into_sentences(script_text)
+    if len(sentences) <= max_scenes:
+        return sentences
+
+    if max_scenes <= 2:
+        n = len(sentences)
+        base, rem = divmod(n, max_scenes)
+        groups, idx = [], 0
+        for i in range(max_scenes):
+            size = base + (1 if i < rem else 0)
+            if size:
+                groups.append(" ".join(sentences[idx:idx + size]))
+            idx += size
+        return groups
+
+    hook = sentences[0]
+    chot = sentences[-1]
+    middle = sentences[1:-1]
+    demo_slots = max_scenes - 2
+    if len(middle) <= demo_slots:
+        demo_groups = middle
     else:
-        logger.info(f"\n  [Visual Engine] ⚠️ Cảnh báo: Không tải được tài nguyên mới.")
+        n = len(middle)
+        base, rem = divmod(n, demo_slots)
+        demo_groups, idx = [], 0
+        for i in range(demo_slots):
+            size = base + (1 if i < rem else 0)
+            demo_groups.append(" ".join(middle[idx:idx + size]))
+            idx += size
+    return [hook, *demo_groups, chot]
 
-    return downloaded
+
+# Nhân vật/mascot CỐ ĐỊNH xuyên suốt kênh — không để AI tự nghĩ lại mỗi video (khác trước đây),
+# vì đã kiểm chứng thực tế: nếu để AI tự chốt mô tả bằng chữ mỗi lần, Veo vẫn ra người khác nhau
+# giữa các cảnh dù mô tả gần giống hệt nhau. Cách đúng là dùng ảnh tham chiếu qua "Ingredients to
+# Video" của Veo 3.1 (upload 1 ảnh nhân vật cố định, tạo 1 lần từ đúng mô tả này) — mô tả chữ ở
+# đây chỉ là lớp hỗ trợ thêm cho AI viết prompt, KHÔNG thay thế được ảnh tham chiếu.
+MASCOT_DESCRIPTION = (
+    "Bống, a gentle young Vietnamese woman, fair skin, wavy dark hair half-up with a ribbon "
+    "clip, warm kind brown eyes, gold hoop earrings, layered gold necklace, lavender pleated "
+    "mini skirt, white top, white high-top sneakers, slender graceful figure, modern "
+    "slice-of-life anime illustration style, clean crisp linework, soft cel-shading, lavender "
+    "pastel palette"
+)
+
+FALLBACK_SCENE_DESCRIPTION = (
+    f"{MASCOT_DESCRIPTION}, relatable everyday moment, thoughtful expression, subtle natural "
+    "motion, warm soft lighting"
+)
 
 
-if __name__ == "__main__":
-    # Test
-    test_script = "Chào bạn, nếu bạn muốn kiếm tiền từ bán áo thun affiliate thì đây là bí quyết"
-    find_and_download_background(test_script)
+def _generic_scene_fallback(sub_texts: list) -> list:
+    """Fallback khi cả Gemini lẫn Groq đều lỗi: dùng 1 mô tả cảnh chung chung nhưng đúng ngách
+    (tiếng Anh) cho mọi câu."""
+    return [FALLBACK_SCENE_DESCRIPTION] * len(sub_texts)
+
+
+def generate_scene_prompts_with_gemini(script_text: str, sub_texts: list, scene_duration_sec: int = 10) -> list:
+    """Sinh prompt tiếng Anh nhất quán cho từng cảnh — dùng cho trợ lý "Hoạt hình Veo thủ công"
+    (người dùng copy từng prompt dán vào Google Flow).
+
+    Ghép mascot CỐ ĐỊNH (MASCOT_DESCRIPTION, không đổi giữa các video) vào hành động/bối cảnh
+    riêng của từng câu do Gemini/Groq viết — để các cảnh trông như "cùng một bộ phim" thay vì rời
+    rạc. Trả về list cùng độ dài với sub_texts (fallback: mô tả cảnh chung chung nếu cả 2 đều lỗi).
+    """
+    import json
+
+    if not sub_texts:
+        return _generic_scene_fallback(sub_texts)
+    if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GROQ_API_KEY"):
+        return _generic_scene_fallback(sub_texts)
+
+    numbered_subs = "\n".join(f"{i+1}. {t}" for i, t in enumerate(sub_texts))
+    prompt = f"""Bạn là đạo diễn hình ảnh chuyên viết prompt cho Google Flow/Veo, ngách Sự Thật Thú Vị & Tâm Lý Cuộc Sống.
+Viết prompt đúng chuẩn khuyến nghị của Veo — PHẢI có đủ các thành phần: Chủ thể, Hành động/biểu cảm, Bối cảnh,
+Phong cách hình ảnh, Góc máy/cỡ cảnh, Ánh sáng/tông màu. Thiếu góc máy hoặc ánh sáng sẽ ra cảnh phẳng,
+chung chung — đây là lỗi cần tránh.
+
+Kịch bản đầy đủ: {script_text[:1200]}
+
+Danh sách {len(sub_texts)} câu thoại theo thứ tự thời gian:
+{numbered_subs}
+
+Nhiệm vụ:
+1. Nhân vật/mascot của kênh CỐ ĐỊNH, dùng NGUYÊN VĂN không đổi cho mọi video (đây là "chị Bống" —
+   người kể chuyện xuyên suốt kênh, có ảnh tham chiếu riêng để giữ nhất quán qua Veo "Ingredients to
+   Video"): "{MASCOT_DESCRIPTION}". Bối cảnh/setting (phòng ngủ, văn phòng, công viên...) được phép
+   ĐỔI theo từng cảnh cho hợp nội dung câu thoại đó — chỉ mô tả nhân vật ở trên là cố định, không
+   được diễn giải lại hay đổi chi tiết ngoại hình.
+2. Với MỖI câu thoại, viết 1 prompt tiếng Anh đầy đủ (40-60 từ), LUÔN bắt đầu bằng đúng nguyên văn mô
+   tả nhân vật ở bước 1, rồi bổ sung thêm đúng 3 thành phần sau cho riêng cảnh đó, viết dạng CỤM TỪ
+   miêu tả nối bằng dấu phẩy (như cách viết prompt ảnh chuẩn), TUYỆT ĐỐI KHÔNG viết thành câu đầy đủ
+   có chủ ngữ/đại từ nhân xưng (không dùng "she/he/her/his/woman/man" lặp lại) — nhân vật đã nêu rõ ở
+   đầu prompt rồi, thêm đại từ ở sau chỉ thừa và có rủi ro AI lỡ dùng NHẦM GIỚI TÍNH (vd viết "he")
+   mâu thuẫn ngay với mô tả "a ... woman" phía trên, khiến Veo vẽ sai giới tính nhân vật ở cảnh đó:
+   - Bối cảnh phù hợp với nội dung câu thoại (vd phòng ngủ ban đêm cho chủ đề mất ngủ, bàn làm việc cho chủ đề trì hoãn).
+   - Góc máy/cỡ cảnh (vd "extreme close-up on face", "top-down shot", "medium shot at eye level").
+   - Ánh sáng/tông màu truyền tải đúng cảm xúc (vd "cold blue nighttime glow" cho lo âu, "warm golden light" cho nhẹ nhõm/ấm áp).
+   Ví dụ ĐÚNG (cụm từ, không chủ ngữ): "...lavender pastel palette, standing in a dim bedroom at night, staring blankly at the ceiling, eyes wide with worry, close-up on face, cold blue nighttime glow."
+   Ví dụ SAI (câu đầy đủ có đại từ, KHÔNG viết kiểu này): "...lavender pastel palette, she is lying in a dim bedroom and her eyes stare blankly at the ceiling..."
+3. QUAN TRỌNG — ưu tiên hàng đầu: mô tả 1 KHOẢNH KHẮC ĐỜI THƯỜNG RELATABLE thể hiện đúng cảm xúc/tình huống của câu thoại đó (vd nằm trên giường nhìn trần nhà cho chủ đề mất ngủ, giật mình nhìn đồng hồ cho chủ đề trì hoãn, biểu cảm ngạc nhiên/xoà tay lên đầu cho 1 sự thật bất ngờ). Đây là yếu tố quan trọng nhất để người xem thấy "đúng là mình" — ưu tiên biểu cảm khuôn mặt và ngôn ngữ cơ thể rõ ràng hơn là hành động chung chung. Chuyển động NHẸ NHÀNG TỰ NHIÊN (subtle motion — thở dài, chớp mắt, quay đầu chậm) — KHÔNG chuyển động quá đà/kịch tính, vì phong cách anime slice-of-life hợp với tiết chế hơn là phô diễn.
+4. Một số câu thoại ở trên có thể đã GỘP nhiều câu gốc lại (1 cảnh phủ nhiều ý) vì mỗi cảnh = 1 lần tạo clip Flow ~{scene_duration_sec} giây, không thể diễn hết nhiều khoảnh khắc khác nhau trong 1 clip ngắn. Khi đó, CHỌN MỘT khoảnh khắc/cảm xúc đại diện, rõ nét nhất trong câu để mô tả — KHÔNG cố liệt kê hết mọi ý vào 1 prompt.
+5. Chỉ mô tả hình ảnh (chủ thể, biểu cảm, bối cảnh, góc máy, ánh sáng), KHÔNG chèn lời thoại hay chữ viết vào ảnh.
+
+CHỈ TRẢ VỀ JSON array đúng {len(sub_texts)} phần tử (mỗi phần tử là 1 prompt tiếng Anh đầy đủ 40-60 từ cho câu tương ứng, đủ các thành phần ở trên), theo đúng thứ tự: ["prompt cảnh 1", "prompt cảnh 2", ...]
+"""
+
+    try:
+        content = call_llm_with_fallback(prompt, json_mode=True)
+        prompts = json.loads(content)
+        if isinstance(prompts, list) and len(prompts) == len(sub_texts):
+            return prompts
+        logger.warning(f"  [Scene Prompts] AI trả về {len(prompts) if isinstance(prompts, list) else 'không phải list'} phần tử, cần {len(sub_texts)}. Dùng fallback.")
+        return _generic_scene_fallback(sub_texts)
+    except Exception as e:
+        logger.info(f"  [Scene Prompts] Error: {e}. Dùng mô tả cảnh chung chung làm fallback.")
+        return _generic_scene_fallback(sub_texts)

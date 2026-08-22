@@ -1,17 +1,12 @@
 """
-video_maker.py - TikTok Video Render Engine
-=============================================
-Ghép video nền + audio + subtitle thành video dọc 1080x1920 cho TikTok.
+video_maker.py - Shared Video Rendering Utilities
+====================================================
+Các hàm dùng chung cho engine render GSAP (core/engines/html_video_maker.py):
+chuẩn bị video/ảnh nền, chọn encoder, trộn audio, parse SRT.
 Hỗ trợ Mac, Windows, Linux (cross-platform).
 
-NOTE: Dùng Pillow để render text (không cần ImageMagick).
+NOTE: Dùng OpenCV (cv2) để đọc/xử lý frame video, không phụ thuộc MoviePy.
 """
-
-# === Pillow compatibility patch (Pillow 10+ removed ANTIALIAS) ===
-import PIL.Image
-if not hasattr(PIL.Image, "ANTIALIAS"):
-    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
-# =================================================================
 
 import os
 import re
@@ -20,19 +15,9 @@ import platform
 import json
 import subprocess
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+import cv2
+from PIL import Image, ImageFont
 from core.utils.logger_config import logger
-from moviepy.editor import (
-    VideoFileClip,
-    ImageClip,
-    AudioFileClip,
-    CompositeVideoClip,
-    CompositeAudioClip,
-    ColorClip,
-    VideoClip,
-    concatenate_videoclips,
-    afx
-)
 
 
 # ============================================================
@@ -193,6 +178,47 @@ def _mix_audio_with_ducking(voice_path, bgm_path, out_path, duration, bgm_start_
         return False
 
 
+def _mix_audio_simple(voice_path, bgm_path, out_path, duration, bgm_start_sec, bgm_volume):
+    """Trộn giọng + nhạc nền bằng ffmpeg amix thường (không ducking) — dùng khi
+    _mix_audio_with_ducking thất bại (sidechaincompress không khả dụng trên máy)."""
+    import shutil
+
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        try:
+            import imageio_ffmpeg
+            ff = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return False
+
+    start = max(0.0, float(bgm_start_sec or 0.0))
+    vol = max(0.0, min(1.0, float(bgm_volume)))
+    bg_filter = f"volume={vol}"
+    if start > 0:
+        bg_filter = f"atrim=start={start},asetpts=PTS-STARTPTS,{bg_filter}"
+
+    filter_complex = (
+        f"[1:a]{bg_filter}[bg];"
+        f"[0:a][bg]amix=inputs=2:duration=first:normalize=0[mix]"
+    )
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    cmd = [
+        ff, "-hide_banner", "-y",
+        "-i", voice_path,
+        "-stream_loop", "-1", "-i", bgm_path,
+        "-filter_complex", filter_complex,
+        "-map", "[mix]", "-t", str(duration), "-ar", "44100",
+        out_path,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=180)
+        return os.path.exists(out_path) and os.path.getsize(out_path) > 0
+    except Exception:
+        return False
+
+
 def open_ffmpeg_with_log(ffmpeg_cmd, output_path):
     """Mở tiến trình FFmpeg, stderr ghi ra file log (pipe trực tiếp dễ deadlock vì
     FFmpeg in progress liên tục). Trả về (process, log_path)."""
@@ -263,125 +289,6 @@ def _get_font(size: int = FONT_SIZE):
     return ImageFont.load_default()
 
 
-def _render_text_frame(text: str, font, width: int, height: int, active_idx: int = -1, style_mode: int = 2, position: str = "center"):
-    """
-    Render Subtitle according to style_mode.
-    1: Ali (Normal case, soft shadow, blue/cyan active)
-    2: Marker Box (UPPERCASE, green background box)
-    3: MrBeast (UPPERCASE, thick stroke, jump, yellow active)
-    4: Typewriter (Normal case, black translucent band, type word by word)
-    """
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    max_text_width = width - 100
-    
-    if style_mode in (2, 3):
-        words = text.upper().split()
-    else:
-        words = text.split()
-        
-    try:
-        space_width = int(draw.textlength(" ", font=font))
-    except AttributeError:
-        space_width = draw.textbbox((0,0), " A", font=font)[2] - draw.textbbox((0,0), "A", font=font)[2]
-
-    # Layout words
-    lines = []
-    current_line_words = []
-    current_width = 0
-    
-    for i, word in enumerate(words):
-        try:
-            w_width = int(draw.textlength(word, font=font))
-        except AttributeError:
-            w_bbox = draw.textbbox((0, 0), word, font=font)
-            w_width = w_bbox[2] - w_bbox[0]
-            
-        line_w_increment = w_width + space_width if current_line_words else w_width
-        if current_width + line_w_increment <= max_text_width:
-            current_line_words.append((i, word, w_width))
-            current_width += line_w_increment
-        else:
-            if current_line_words:
-                lines.append((current_line_words, current_width))
-            current_line_words = [(i, word, w_width)]
-            current_width = w_width
-            
-    if current_line_words:
-        lines.append((current_line_words, current_width))
-        
-    line_height = draw.textbbox((0, 0), "Ẩy", font=font)
-    single_line_h = (line_height[3] - line_height[1]) + 10
-    total_h = single_line_h * len(lines)
-    
-    if position == "bottom":
-        # Cách đáy 400px để tránh đè lên UI Tiktok (caption, tim, share)
-        y = height - total_h - 400 
-    else:
-        y = (height - total_h) // 2
-
-    # Style 4 (Typewriter) Backdrop
-    if style_mode == 4:
-        draw.rectangle([0, y - 50, width, y + total_h + 50], fill=(0, 0, 0, 150))
-        
-    for line_words, line_w in lines:
-        x = (width - line_w) // 2
-        for i, word, w_width in line_words:
-            # Skip words outside typewriter view
-            if style_mode == 4 and i > active_idx:
-                break
-                
-            current_y = y
-            fill_color = (255, 255, 255, 255)
-            
-            if style_mode == 1:
-                # Ali Abdaal style
-                fill_color = (135, 206, 250, 255) if i == active_idx else (230, 230, 230, 255)
-                draw.text((x+3, y+3), word, font=font, fill=(0,0,0,150))
-                draw.text((x, y), word, font=font, fill=fill_color)
-                
-            elif style_mode == 2:
-                # Marker Box
-                if i == active_idx:
-                    draw.rectangle([x-10, y-5, x+w_width+10, y+(single_line_h-10)], fill=(57, 255, 20, 255))
-                    fill_color = (0, 0, 0, 255)
-                else:
-                    draw.text((x+4, y+4), word, font=font, fill=(0,0,0,255))
-                draw.text((x, y), word, font=font, fill=fill_color)
-                
-            elif style_mode == 3:
-                # MrBeast
-                f_font = font
-                stroke_w = STROKE_WIDTH
-                if i == active_idx:
-                    fill_color = HIGHLIGHT_COLOR + (255,)
-                    current_y = y - 10
-                    stroke_w = STROKE_WIDTH + 1
-                    
-                for dx in range(-stroke_w, stroke_w + 1):
-                    for dy in range(-stroke_w, stroke_w + 1):
-                        if dx * dx + dy * dy <= stroke_w * stroke_w:
-                            draw.text((x + dx, current_y + dy), word, font=f_font, fill=STROKE_COLOR + (255,))
-                draw.text((x, current_y), word, font=f_font, fill=fill_color)
-                
-            elif style_mode == 4:
-                # Typewriter
-                draw.text((x, y), word, font=font, fill=(255,255,255,255))
-                
-            elif style_mode == 5:
-                # Soft Aesthetic (Affiliate Style)
-                # Smaller, elegant, with a very subtle shadow
-                draw.text((x+2, y+2), word, font=font, fill=(0,0,0,80)) # Subtle shadow
-                draw.text((x, y), word, font=font, fill=(255, 255, 255, 255)) # Pure white
-                
-            x += w_width + space_width
-            
-        y += single_line_h
-        
-    return np.array(img)
-
-
 def _parse_srt(srt_path: str):
     """
     Đọc file SRT và trả về danh sách subtitle chunks.
@@ -427,103 +334,250 @@ def _parse_words(srt_path: str):
     return []
 
 
-def _pick_background(bg_dir: str):
-    """Chọn ngẫu nhiên 1 file video nền từ thư mục backgrounds."""
-    supported = (".mp4", ".mov", ".avi", ".mkv", ".webm")
-    videos = [
-        os.path.join(bg_dir, f)
-        for f in os.listdir(bg_dir)
-        if f.lower().endswith(supported)
-    ]
-    if not videos:
-        raise FileNotFoundError(
-            f"Không tìm thấy video nền trong '{bg_dir}/'.\n"
-            f"Hãy tải video dọc (9:16) từ Pexels.com và bỏ vào thư mục '{bg_dir}/'."
-        )
-    chosen = random.choice(videos)
-    logger.info(f"  [Background] Selected: {os.path.basename(chosen)}")
-    return chosen
+def _collect_visual_sources(image_dir: str, uploaded_images=None):
+    """Trả về danh sách ảnh/video người dùng đã upload (vd clip tải về từ Google Flow), sắp xếp
+    theo đúng thứ tự cảnh.
 
-
-def _collect_visual_sources(
-    bg_dir: str,
-    image_dir: str,
-    visual_mode: str,
-    uploaded_images=None,
-):
-    """Trả về danh sách nguồn visual theo mode: pexels | uploaded | mix."""
+    Ưu tiên tên file theo quy ước `1_, 2_, 3_...` (trợ lý "Hoạt hình Veo thủ công" dặn dùng) —
+    sắp theo SỐ thật chứ không phải thứ tự chữ cái (tránh lỗi "10_..." đứng trước "2_..." nếu
+    sort chuỗi thường). Nếu có file KHÔNG theo đúng quy ước này (thiếu số thứ tự ở đầu tên), tên
+    file không còn đáng tin cậy để suy ra thứ tự cảnh nữa — chuyển sang sắp theo THỜI GIAN TẢI VỀ
+    MÁY (mtime), vì người dùng thường tải các clip Flow về đúng theo thứ tự vừa tạo ra.
+    """
     video_ext = (".mp4", ".mov", ".avi", ".mkv", ".webm")
     image_ext = (".jpg", ".jpeg", ".png", ".webp")
 
-    videos = []
-    bg_images = []  # Các ảnh AI sinh tự động lưu trong bg_dir
-    images = []     # Các ảnh upload lưu trong image_dir
-
-    if os.path.isdir(bg_dir):
-        for f in os.listdir(bg_dir):
-            path = os.path.join(bg_dir, f)
-            if f.lower().endswith(video_ext):
-                videos.append(path)
-            elif f.lower().endswith(image_ext):
-                bg_images.append(path)
-
+    uploaded_media = []
     if os.path.isdir(image_dir):
-        images = [
+        uploaded_media = [
             os.path.join(image_dir, f)
             for f in os.listdir(image_dir)
-            if f.lower().endswith(image_ext)
+            if f.lower().endswith(image_ext + video_ext)
         ]
 
     if uploaded_images:
         allowed = {os.path.basename(x) for x in uploaded_images}
-        images = [p for p in images if os.path.basename(p) in allowed]
+        uploaded_media = [p for p in uploaded_media if os.path.basename(p) in allowed]
 
-    if visual_mode == "uploaded":
-        return images
-    if visual_mode == "mix":
-        return videos + bg_images + images
-    # Đối với mode pexels, trả về cả video pexels và các ảnh AI được tải tự động nằm trong bg_dir
-    return videos + bg_images
+    if not uploaded_media:
+        return uploaded_media
+
+    numbered_re = re.compile(r"^(\d+)_")
+
+    def _scene_number(path):
+        m = numbered_re.match(os.path.basename(path))
+        return int(m.group(1)) if m else None
+
+    if all(_scene_number(p) is not None for p in uploaded_media):
+        uploaded_media.sort(key=_scene_number)
+    else:
+        uploaded_media.sort(key=os.path.getmtime)
+
+    return uploaded_media
+
+
+class _FrameSource:
+    """Bọc 1 hàm sinh frame theo thời gian t — dùng cho ảnh tĩnh (Ken Burns)."""
+
+    def __init__(self, make_frame, duration):
+        self._make_frame = make_frame
+        self.duration = duration
+
+    def get_frame(self, t):
+        return self._make_frame(t)
+
+    def close(self):
+        pass
+
+
+class _ColorSource:
+    """Khung hình màu đơn sắc tĩnh — dùng khi không có tài nguyên nền hoặc lỗi tải asset."""
+
+    def __init__(self, color=(30, 30, 30), duration=1.0, size=None):
+        w, h = size or (VIDEO_WIDTH, VIDEO_HEIGHT)
+        self._frame = np.full((h, w, 3), color, dtype=np.uint8)
+        self.duration = duration
+
+    def get_frame(self, t):
+        return self._frame
+
+    def close(self):
+        pass
+
+
+class _Cv2VideoSource:
+    """Đọc frame thô từ 1 file video bằng OpenCV, thay cho moviepy.VideoFileClip.
+
+    Đọc tuần tự khi có thể (nhanh), chỉ seek khi t nhảy cóc.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self.cap = cv2.VideoCapture(path)
+        if not self.cap.isOpened():
+            raise IOError(f"Không mở được video: {path}")
+        fps = self.cap.get(cv2.CAP_PROP_FPS) or 0
+        frame_count = self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        self.native_fps = fps if fps > 0 else FPS
+        self.duration = (frame_count / self.native_fps) if frame_count > 0 else 0.0
+        self._last_frame_no = -1
+        self._last_frame = None
+
+    def get_frame(self, t):
+        max_frame_no = max(0, int(self.duration * self.native_fps) - 1)
+        frame_no = min(int(t * self.native_fps), max_frame_no)
+        if frame_no == self._last_frame_no and self._last_frame is not None:
+            return self._last_frame
+
+        if frame_no != self._last_frame_no + 1:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
+        ret, frame = self.cap.read()
+        if not ret:
+            if self._last_frame is not None:
+                return self._last_frame
+            raise RuntimeError(f"Không đọc được frame nào từ video: {self.path}")
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self._last_frame_no = frame_no
+        self._last_frame = frame_rgb
+        return frame_rgb
+
+    def close(self):
+        try:
+            self.cap.release()
+        except Exception:
+            pass
+
+
+def _fit_frame_9_16(frame):
+    """Crop trung tâm 1 frame về đúng tỉ lệ 9:16 rồi resize khớp VIDEO_WIDTH x VIDEO_HEIGHT."""
+    h, w = frame.shape[:2]
+    target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT
+    ratio = w / h
+    if ratio > target_ratio:
+        new_w = max(1, int(h * target_ratio))
+        x0 = (w - new_w) // 2
+        frame = frame[:, x0:x0 + new_w]
+    else:
+        new_h = max(1, int(w / target_ratio))
+        y0 = (h - new_h) // 2
+        frame = frame[y0:y0 + new_h, :]
+    return cv2.resize(frame, (VIDEO_WIDTH, VIDEO_HEIGHT), interpolation=cv2.INTER_AREA)
+
+
+class _FormattedVideoSource:
+    """Bọc _Cv2VideoSource: tự crop/resize mỗi frame về đúng khung 1080x1920 và cho phép
+    chọn 1 đoạn con (start_offset, duration) của video gốc."""
+
+    def __init__(self, path, start_offset=0.0, duration=None):
+        self._src = _Cv2VideoSource(path)
+        self.start_offset = max(0.0, start_offset)
+        self.duration = duration if duration is not None else max(0.0, self._src.duration - self.start_offset)
+
+    def get_frame(self, t):
+        frame = self._src.get_frame(self.start_offset + t)
+        return _fit_frame_9_16(frame)
+
+    def close(self):
+        self._src.close()
+
+
+class _ConcatVideoSource:
+    """Nối nhiều đoạn (path hoặc None=màu đen, start_offset, seg_duration) thành 1 nguồn frame
+    liên tục — thay cho moviepy.concatenate_videoclips. Chỉ giữ 1 đoạn con mở tại 1 thời điểm."""
+
+    def __init__(self, segments):
+        self.segments = segments
+        self.duration = sum(seg[2] for seg in segments)
+        self._cum_start = []
+        acc = 0.0
+        for _, _, dur in segments:
+            self._cum_start.append(acc)
+            acc += dur
+        self._current_idx = -1
+        self._current_src = None
+
+    def _segment_index_at(self, t):
+        idx = 0
+        for i in range(len(self.segments) - 1, -1, -1):
+            if t >= self._cum_start[i]:
+                idx = i
+                break
+        return idx
+
+    def get_frame(self, t):
+        idx = self._segment_index_at(t)
+        if idx != self._current_idx:
+            if self._current_src is not None:
+                self._current_src.close()
+            path, start_offset, seg_dur = self.segments[idx]
+            if path is None:
+                self._current_src = _ColorSource(color=(0, 0, 0), duration=seg_dur)
+            else:
+                self._current_src = _FormattedVideoSource(path, start_offset=start_offset, duration=seg_dur)
+            self._current_idx = idx
+
+        local_t = t - self._cum_start[idx]
+        local_t = max(0.0, min(local_t, self._current_src.duration - 0.001))
+        return self._current_src.get_frame(local_t)
+
+    def close(self):
+        if self._current_src is not None:
+            self._current_src.close()
 
 
 def _prepare_image_background(image_path: str, duration: float):
-    """Chuẩn bị nền từ ảnh tĩnh với hiệu ứng Cinematic Zoom (Ken Burns)."""
+    """Chuẩn bị nền từ ảnh tĩnh với hiệu ứng Cinematic Zoom (Ken Burns).
+
+    Chọn ngẫu nhiên 1 trong 4 kiểu chuyển động mỗi cảnh (zoom-in tâm / lệch trái / lệch phải /
+    zoom-out nhẹ) để các cảnh liên tiếp trong cùng video không lặp lại y hệt nhau.
+    """
     # Load image with PIL to get size
     img = Image.open(image_path)
     img_w, img_h = img.size
-    
+
     # Resize sao cho phủ kín 1080x1920 (crop trung tâm)
     target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT
     img_ratio = img_w / img_h
-    
+
     if img_ratio > target_ratio:
         new_h = VIDEO_HEIGHT
         new_w = int(new_h * img_ratio)
     else:
         new_w = VIDEO_WIDTH
         new_h = int(new_w / img_ratio)
-        
+
     img = img.resize((new_w, new_h), Image.LANCZOS)
-    
-    # Hàm tạo frame với hiệu ứng zoom
+
+    pan_mode = random.choice(["center", "left", "right", "zoom_out"])
+    ZOOM_RANGE = 0.12  # biên độ zoom nhẹ hơn cố định 15% cũ, vì có thêm chuyển động pan
+
+    # Hàm tạo frame với hiệu ứng zoom + pan
     def make_frame(t):
-        # Zoom từ 100% lên 115% trong suốt duration
         """Make frame."""
-        zoom = 1.0 + (t / duration) * 0.15
+        progress = t / duration
+        zoom = 1.0 + ZOOM_RANGE * ((1 - progress) if pan_mode == "zoom_out" else progress)
         curr_w = int(new_w * zoom)
         curr_h = int(new_h * zoom)
-        
+
         # Resize frame
         frame_img = img.resize((curr_w, curr_h), Image.LANCZOS)
-        
-        # Crop center
-        left = (curr_w - VIDEO_WIDTH) // 2
+
+        # Vị trí crop: center/zoom_out giữ giữa khung, left/right trôi dần sang 1 bên
+        horizontal_range = max(0, curr_w - VIDEO_WIDTH)
+        if pan_mode == "left":
+            left_frac = 0.5 * (1 - progress)
+        elif pan_mode == "right":
+            left_frac = 0.5 + 0.5 * progress
+        else:
+            left_frac = 0.5
+        left = int(horizontal_range * left_frac)
         top = (curr_h - VIDEO_HEIGHT) // 2
         frame_img = frame_img.crop((left, top, left + VIDEO_WIDTH, top + VIDEO_HEIGHT))
-        
+
         return np.array(frame_img.convert("RGB"))
 
-    return VideoClip(make_frame, duration=duration)
+    return _FrameSource(make_frame, duration)
 
 
 def _prepare_visual_background(asset_path: str, duration: float, other_bg_paths=None):
@@ -539,35 +593,20 @@ def _prepare_non_loop_background(bg_path: str, duration: float, other_bg_paths=N
     Chuẩn bị video nền bằng cách ghép nối nhiều video khác nhau từ other_bg_paths nếu video hiện tại quá ngắn.
     Tránh lặp lại một video đơn lẻ.
     """
-    clip = VideoFileClip(bg_path)
-    
-    # Căn chỉnh kích thước tỷ lệ khung hình 9:16
-    def format_clip(c):
-        """Format clip."""
-        clip_ratio = c.w / c.h
-        target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT
-        if clip_ratio > target_ratio:
-            c = c.resize(height=VIDEO_HEIGHT)
-            x_center = c.w / 2
-            c = c.crop(x1=x_center - VIDEO_WIDTH / 2, x2=x_center + VIDEO_WIDTH / 2, y1=0, y2=VIDEO_HEIGHT)
-        else:
-            c = c.resize(width=VIDEO_WIDTH)
-            y_center = c.h / 2
-            c = c.crop(x1=0, x2=VIDEO_WIDTH, y1=y_center - VIDEO_HEIGHT / 2, y2=y_center + VIDEO_HEIGHT / 2)
-        return c
+    probe = _Cv2VideoSource(bg_path)
+    src_duration = probe.duration
+    probe.close()
 
-    clip = format_clip(clip)
-
-    if clip.duration >= duration:
+    if src_duration >= duration:
         # Nếu đủ dài, lấy một đoạn ngẫu nhiên
-        max_start = clip.duration - duration
+        max_start = src_duration - duration
         start_time = random.uniform(0, max_start)
-        return clip.subclip(start_time, start_time + duration)
+        return _FormattedVideoSource(bg_path, start_offset=start_time, duration=duration)
 
     # Nếu quá ngắn, thực hiện ghép nối (concatenate) với các clip khác
-    logger.info(f"  [Video] Clip '{os.path.basename(bg_path)}' ({clip.duration:.1f}s) ngắn hơn scene ({duration:.1f}s). Đang ghép nối thêm video...")
-    clips_to_concat = [clip]
-    remaining = duration - clip.duration
+    logger.info(f"  [Video] Clip '{os.path.basename(bg_path)}' ({src_duration:.1f}s) ngắn hơn scene ({duration:.1f}s). Đang ghép nối thêm video...")
+    segments = [(bg_path, 0.0, src_duration)]
+    remaining = duration - src_duration
 
     # Lọc các video khác từ list
     pool = []
@@ -584,93 +623,50 @@ def _prepare_non_loop_background(bg_path: str, duration: float, other_bg_paths=N
     while remaining > 0.01:
         next_path = pool[pool_idx % len(pool)]
         pool_idx += 1
-        
+
         try:
-            next_c = VideoFileClip(next_path)
-            next_c = format_clip(next_c)
-            
-            if next_c.duration >= remaining:
+            probe = _Cv2VideoSource(next_path)
+            next_duration = probe.duration
+            probe.close()
+
+            if next_duration >= remaining:
                 # Đủ bù thời lượng còn lại
-                max_start = next_c.duration - remaining
+                max_start = next_duration - remaining
                 start_t = random.uniform(0, max_start)
-                clips_to_concat.append(next_c.subclip(start_t, start_t + remaining))
+                segments.append((next_path, start_t, remaining))
                 remaining = 0
             else:
-                clips_to_concat.append(next_c)
-                remaining -= next_c.duration
+                segments.append((next_path, 0.0, next_duration))
+                remaining -= next_duration
         except Exception as e:
             logger.info(f"  [Video] ⚠️ Lỗi load clip phụ '{next_path}': {e}")
-            # Fallback nếu lỗi: dùng ColorClip đen tạm thời
-            black_c = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(0, 0, 0), duration=remaining)
-            clips_to_concat.append(black_c)
+            # Fallback nếu lỗi: đoạn màu đen tạm thời
+            segments.append((None, 0.0, remaining))
             remaining = 0
 
-    # Ghép nối tất cả các clip
-    final_clip = concatenate_videoclips(clips_to_concat)
-    return final_clip
-
-
-def record_used_backgrounds(used_paths, database_path="used_backgrounds.json"):
-    """Trích xuất Pexels IDs từ tên file video đã dùng và lưu vào database."""
-    import json
-    import re
-    ids = []
-    for path in used_paths:
-        filename = os.path.basename(path)
-        match = re.search(r"pexels_(\d+)\.mp4", filename)
-        if match:
-            ids.append(int(match.group(1)))
-            
-    if not ids:
-        return
-        
-    existing_ids = []
-    if os.path.exists(database_path):
-        try:
-            with open(database_path, "r") as f:
-                existing_ids = json.load(f)
-                if not isinstance(existing_ids, list):
-                    existing_ids = []
-        except Exception as e:
-            logger.info(f"  [Visual Logging] ⚠️ Lỗi đọc {database_path}: {e}")
-            
-    # Hợp nhất và loại trùng
-    updated_ids = list(set(existing_ids + ids))
-    
-    try:
-        with open(database_path, "w") as f:
-            json.dump(updated_ids, f, indent=4)
-        logger.info(f"  [Visual Logging] ✅ Đã lưu thêm {len(ids)} video IDs đã dùng vào {database_path}.")
-    except Exception as e:
-        logger.info(f"  [Visual Logging] ⚠️ Lỗi ghi {database_path}: {e}")
+    return _ConcatVideoSource(segments)
 
 
 class LazyBackgroundClip:
     """Trình quản lý Lazy Load cho background video. Chỉ mở 1 video tại một thời điểm để tiết kiệm RAM."""
-    def __init__(self, subs, duration, visual_sources, visual_mode, ai_images):
+
+    CROSSFADE_SEC = 0.3  # thời lượng chuyển cảnh mượt ở đầu mỗi scene (trừ scene đầu tiên)
+
+    def __init__(self, subs, duration, visual_sources):
         self.subs = subs
         self.duration = duration
         self.visual_sources = visual_sources
-        self.visual_mode = visual_mode
-        self.ai_images = ai_images
-        
+
         self.scenes = []
         self.actually_used = []
-        
+
         for i, sub in enumerate(subs):
             start_t = sub["start"]
             end_t = subs[i+1]["start"] if i+1 < len(subs) else duration
             scene_duration = end_t - start_t
-            
-            if visual_mode == "ai":
-                from core.engines import ai_visuals
-                asset_p = ai_images[i] if i < len(ai_images) and ai_images[i] else ai_visuals.generate_pollinations_image("tiktok story background")
-            else:
-                if visual_sources:
-                    asset_p = visual_sources[i % len(visual_sources)]
-                else:
-                    asset_p = None
-                
+
+            asset_p = visual_sources[i % len(visual_sources)] if visual_sources else None
+
             if asset_p:
                 self.scenes.append({
                     "start": start_t,
@@ -683,12 +679,13 @@ class LazyBackgroundClip:
         self.current_idx = -1
         self.current_clip = None
         self.current_start_t = 0.0
-        
+        self.prev_last_frame = None  # frame cuối của cảnh trước, dùng để crossfade sang cảnh mới
+
     def get_frame(self, t):
         """Get frame."""
         if not self.scenes:
             return np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH, 3), dtype=np.uint8)
-            
+
         idx = 0
         for i, scene in enumerate(self.scenes):
             if scene["start"] <= t < scene["end"]:
@@ -697,28 +694,44 @@ class LazyBackgroundClip:
         else:
             if t >= self.scenes[-1]["end"]:
                 idx = len(self.scenes) - 1
-                
+
         if self.current_idx != idx:
             if self.current_clip is not None:
+                # Lưu lại frame cuối để crossfade, rồi đóng ngay — không giữ clip cũ mở
+                # lâu hơn (tránh lặp lại sự cố OOM đã ghi trong docs/ai/KNOWLEDGE.md).
+                try:
+                    self.prev_last_frame = self.current_clip.get_frame(max(0.0, self.current_clip.duration - 0.001))
+                except Exception:
+                    self.prev_last_frame = None
                 try:
                     self.current_clip.close()
                 except Exception:
                     pass
                 self.current_clip = None
-                
+            else:
+                self.prev_last_frame = None
+
             scene = self.scenes[idx]
             try:
                 self.current_clip = _prepare_visual_background(scene["asset"], scene["duration"], self.visual_sources)
             except Exception as e:
                 logger.info(f"  [Video] ⚠️ Lỗi nạp asset {scene['asset']}: {e}")
-                self.current_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(30, 30, 30), duration=scene["duration"])
-                
+                self.current_clip = _ColorSource(color=(30, 30, 30), duration=scene["duration"])
+
             self.current_idx = idx
             self.current_start_t = scene["start"]
-            
+
         clip_t = t - self.current_start_t
         clip_t = max(0.0, min(clip_t, self.current_clip.duration - 0.001))
-        return self.current_clip.get_frame(clip_t)
+        frame = self.current_clip.get_frame(clip_t)
+
+        # Crossfade ngắn ở đầu mỗi cảnh (trừ cảnh đầu tiên, không có prev_last_frame) để
+        # tránh cắt cứng khi đổi background.
+        if self.prev_last_frame is not None and clip_t < self.CROSSFADE_SEC:
+            alpha = clip_t / self.CROSSFADE_SEC
+            frame = (self.prev_last_frame.astype(np.float32) * (1 - alpha) + frame.astype(np.float32) * alpha).astype(np.uint8)
+
+        return frame
         
     def close(self):
         """Close."""
@@ -729,310 +742,3 @@ class LazyBackgroundClip:
                 pass
 
 
-def make_video(
-    audio_path: str,
-    srt_path: str,
-    bg_dir: str = "backgrounds",
-    image_dir: str = "uploaded_images",
-    output_path: str = "output/final_video.mp4",
-    style: int = 1,
-    position: str = "bottom",
-    bgm_path: str = None,
-    bgm_start_sec: float = 0.0,
-    bgm_volume: float = BGM_VOLUME,
-    visual_mode: str = "pexels",
-    uploaded_images=None,
-    progress_callback=None,
-):
-    """
-    Hàm chính: Ghép audio + video nền + subtitle thành video TikTok hoàn chỉnh.
-    """
-    logger.info("\n🎬 Bắt đầu tạo video...")
-
-    # 1. Load audio
-    if not os.path.exists(audio_path):
-        raise FileNotFoundError(f"Audio file not found: {audio_path}")
-    audio = AudioFileClip(audio_path)
-    duration = audio.duration
-    logger.info(f"  [Audio] Duration: {duration:.1f}s")
-    
-    # MIX AUDIO BACKGROUND (BGM)
-    bgm_mix_clip = None
-    ducked_audio_path = None  # nếu set: file đã trộn sẵn (ducking) dùng thẳng cho render
-    bgm_volume = max(0.0, min(1.0, float(bgm_volume)))
-    if bgm_path and os.path.exists(bgm_path):
-        logger.info(f"  [Audio] Mixing BGM: {os.path.basename(bgm_path)}")
-
-        # Ưu tiên: ducking bằng ffmpeg (nhạc tự hạ xuống khi có giọng → giọng nổi rõ)
-        candidate = output_path.replace(".mp4", "_ducked.mp3")
-        if _mix_audio_with_ducking(audio_path, bgm_path, candidate, duration, bgm_start_sec, bgm_volume):
-            ducked_audio_path = candidate
-            logger.info(f"  [Audio] ✅ BGM ducking (sidechain) - volume {bgm_volume:.2f}, nhạc tự né giọng.")
-        else:
-            # Fallback: mix thường bằng moviepy (volume cố định)
-            logger.info("  [Audio] ⚠️ Ducking thất bại, dùng mix thường (moviepy).")
-            try:
-                bgm_clip = AudioFileClip(bgm_path)
-                bgm_start_sec = max(0.0, float(bgm_start_sec or 0.0))
-                if bgm_start_sec >= bgm_clip.duration:
-                    logger.info("  [Audio] ⚠️ BGM start vượt độ dài file, reset về 0s")
-                    bgm_start_sec = 0.0
-
-                bgm_mix_clip = bgm_clip.subclip(bgm_start_sec, bgm_clip.duration)
-                if bgm_mix_clip.duration <= 0.05:
-                    bgm_mix_clip = bgm_clip
-
-                bgm_mix_clip = afx.audio_loop(bgm_mix_clip, duration=duration)
-                bgm_mix_clip = bgm_mix_clip.subclip(0, duration)
-                bgm_mix_clip = bgm_mix_clip.volumex(bgm_volume)
-                audio = CompositeAudioClip([bgm_mix_clip, audio])
-            except Exception as e:
-                logger.info(f"  [Audio] ⚠️ Failed to mix BGM: {e}")
-
-    # 2. Chuẩn bị video nền (Multi-Scene)
-    visual_sources = _collect_visual_sources(
-        bg_dir=bg_dir,
-        image_dir=image_dir,
-        visual_mode=visual_mode,
-        uploaded_images=uploaded_images,
-    )
-    # List theo dõi các visual assets thực tế sử dụng để lưu vết
-    actually_used_assets = []
-
-    if not visual_sources:
-        bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(30, 30, 30), duration=duration)
-    else:
-        # LOGIC MULTI-SCENE: Chia nhỏ thời lượng theo subtitle
-        logger.info(f"  [Video] Multi-Scene mode: Đang ghép nối tài nguyên...")
-        
-        # Lấy danh sách sub để chia đoạn
-        subs = _parse_srt(srt_path)
-        if not subs:
-            # Fallback nếu không có sub
-            if visual_mode == "ai":
-                from core.engines import ai_visuals
-                bg_path = ai_visuals.generate_pollinations_image("tiktok story background")
-                bg_clip = _prepare_visual_background(bg_path, duration)
-                actually_used_assets = [bg_path]
-            else:
-                chosen_bg = random.choice(visual_sources)
-                bg_clip = _prepare_visual_background(chosen_bg, duration, visual_sources)
-                actually_used_assets = [chosen_bg]
-        else:
-            if visual_sources:
-                random.shuffle(visual_sources) # Xáo trộn để tránh lặp lại
-            
-            # Sinh ảnh AI trực tiếp dựa trên nội dung thoại bằng Đa Luồng (Multithreading)
-            if visual_mode == "ai":
-                from core.engines import ai_visuals
-                import concurrent.futures
-                logger.info(f"  [Video] Đang sinh {len(subs)} ảnh AI bằng đa luồng...")
-                
-                def generate_ai_bg(sub_item):
-                    """Generate ai bg."""
-                    return ai_visuals.generate_pollinations_image(sub_item["text"])
-                
-                ai_images = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                    ai_images = list(executor.map(generate_ai_bg, subs))
-            else:
-                ai_images = []
-            
-            # Dùng Lazy Loader để tránh OOM
-            bg_clip = LazyBackgroundClip(subs, duration, visual_sources, visual_mode, ai_images)
-            actually_used_assets = bg_clip.actually_used
-
-
-    # 3. Parse subtitles từ SRT
-    subs = _parse_srt(srt_path)
-    words_data = _parse_words(srt_path)
-    font = _get_font()
-
-    # 3.5 Tạo Thumbnail tự động (Ảnh bìa)
-    logger.info("  [Thumbnail] Generating video cover...")
-    try:
-        first_frame = bg_clip.get_frame(0.1).astype(np.uint8)
-        img = Image.fromarray(first_frame).convert("RGBA")
-        img = img.filter(ImageFilter.GaussianBlur(10))
-        img = ImageEnhance.Brightness(img).enhance(0.4)
-        
-        # Render câu Hook đầu tiên thành text 3D mập mạp bự gấp đôi ở giữa màn hình
-        thumb_font = _get_font(FONT_SIZE * 2)
-        title_text = subs[0]["text"] if subs else "TIKTOK"
-        
-        # Dùng phong cách MrBeast (style_mode=3) để chữ nổi bần bật với từ khoá đầu màu Vàng.
-        text_layer_np = _render_text_frame(title_text, thumb_font, VIDEO_WIDTH, VIDEO_HEIGHT, active_idx=0, style_mode=3, position="center")
-        text_layer_img = Image.fromarray(text_layer_np, "RGBA")
-        
-        # Dán lớp chữ lên nền mờ
-        img.paste(text_layer_img, (0, 0), text_layer_img)
-        
-        thumb_path = output_path.rsplit(".", 1)[0] + "_cover.jpg"
-        img.convert("RGB").save(thumb_path)
-        logger.info(f"  [Thumbnail] ✅ Saved cover to: {thumb_path}")
-    except Exception as e:
-         logger.info(f"  [Thumbnail] ⚠️ Thumbnail generation failed: {e}")
-
-    # Ghép words vào subs
-    for sub in subs:
-        sub["words"] = []
-        for w in words_data:
-            w_mid = (w["start"] + w["end"]) / 2
-            if sub["start"] - 0.2 <= w_mid <= sub["end"] + 0.2:
-                sub["words"].append(w)
-
-    # 4. Pre-render text frames caching
-    logger.info(f"  [Subtitles] Rendering dynamic text frames cache (Style {style}, Position {position})...")
-    frame_cache = {}
-    
-    def get_text_frame(sub_index, active_idx):
-        """Get text frame."""
-        key = (sub_index, active_idx)
-        if key not in frame_cache:
-            rgba = _render_text_frame(subs[sub_index]["text"], font, VIDEO_WIDTH, VIDEO_HEIGHT, active_idx, style_mode=style, position=position)
-            # Precompute alpha and pre-multiplied RGB for ultra-fast compositing
-            alpha = (rgba[:, :, 3:4] / 255.0).astype(np.float32)
-            rgb_alpha = (rgba[:, :, :3] * alpha).astype(np.float32)
-            inv_alpha = (1.0 - alpha).astype(np.float32)
-            frame_cache[key] = (rgb_alpha, inv_alpha)
-        return frame_cache[key]
-
-    # 5. Tạo clip kết hợp: background + overlay tối + subtitle
-    # 5. Tạo clip kết hợp: background + overlay tối + subtitle
-    def make_combined_frame(get_frame, t):
-        # Mặc định
-        """Make combined frame."""
-        curr_offset_x = 0
-        curr_offset_y = 0
-        curr_scale = 1.0
-        shake_intensity = 0
-        
-        # Tìm subtitle và cảm xúc để điều chỉnh camera/acting
-        active_sub_idx = -1
-        active_word_idx = -1
-        for i, sub in enumerate(subs):
-            if sub["start"] <= t <= sub["end"]:
-                active_sub_idx = i
-                for w_idx, w in enumerate(sub["words"]):
-                    if w["start"] <= t <= w["end"]:
-                        active_word_idx = w_idx
-                        break
-                break
-        
-        bg_frame = get_frame(t).astype(np.float32)
-        # Phủ overlay tối (in-place, tránh cấp phát mảng mới mỗi frame)
-        bg_frame *= (1.0 - OVERLAY_OPACITY)
-
-        # Subtitle Overlay (blend in-place: bg*inv_alpha + rgb_alpha)
-        if active_sub_idx != -1:
-            rgb_alpha, inv_alpha = get_text_frame(active_sub_idx, active_word_idx)
-            bg_frame *= inv_alpha
-            bg_frame += rgb_alpha
-
-        np.clip(bg_frame, 0, 255, out=bg_frame)
-        return bg_frame.astype(np.uint8)
-
-    # 6. Render ra file bằng FFmpeg Pipe (Chống tràn RAM)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    logger.info(f"\n  [Audio] Đang chuẩn bị âm thanh cho render...")
-    temp_audio_path = output_path.replace(".mp4", "_temp_audio.mp3")
-    if ducked_audio_path and os.path.exists(ducked_audio_path):
-        # Đã trộn sẵn (ducking) ở bước trên, dùng thẳng.
-        temp_audio_path = ducked_audio_path
-    else:
-        try:
-            audio.write_audiofile(temp_audio_path, fps=44100, logger=None)
-        except Exception as e:
-            logger.info(f"  [Audio] ⚠️ Lỗi xuất âm thanh: {e}")
-            # Fallback to pure audio_path if mix fails
-            temp_audio_path = audio_path
-        
-    logger.info(f"  [Render] Bắt đầu stream frames trực tiếp tới FFmpeg (Siêu nhẹ, RAM < 200MB)...")
-    import subprocess
-
-    # Chọn encoder tốt nhất khả dụng (iGPU VAAPI/QSV nếu chạy được, không thì libx264 CPU)
-    ffmpeg_exe, pre_input_args, post_input_args = _select_video_encoder()
-
-    ffmpeg_cmd = [
-        ffmpeg_exe, "-y",
-        *pre_input_args,
-        "-thread_queue_size", "64",
-        "-f", "rawvideo",
-        "-vcodec", "rawvideo",
-        "-s", f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}",
-        "-pix_fmt", "rgb24",
-        "-r", str(FPS),
-        "-i", "-",          # stdin pipe
-        "-i", temp_audio_path,  # Audio file
-        *post_input_args,
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        output_path
-    ]
-    
-    # stderr ghi ra log file — đọc lại khi fail thay vì nuốt lỗi âm thầm
-    process, ffmpeg_log = open_ffmpeg_with_log(ffmpeg_cmd, output_path)
-    
-    def safe_get_frame(t_val):
-        # Tránh lỗi index out of bounds của moviepy
-        """Safe get frame."""
-        t_safe = max(0.0, min(t_val, bg_clip.duration - 0.001))
-        return bg_clip.get_frame(t_safe)
-
-    total_frames = int(duration * FPS)
-    try:
-        for frame_idx in range(total_frames):
-            t = frame_idx / FPS
-            # Tính toán frame
-            frame_data = make_combined_frame(safe_get_frame, t)
-            
-            # Ghi vào pipe của FFmpeg
-            process.stdin.write(frame_data.tobytes())
-            
-            # Hiển thị tiến độ mỗi giây (FPS frame)
-            if total_frames and frame_idx % FPS == 0:
-                percent = (frame_idx / total_frames) * 100
-                logger.info(f"  [Render] Đang ghép khung hình: {frame_idx}/{total_frames} ({percent:.1f}%)")
-                if progress_callback:
-                    progress_callback(50 + percent * 0.45, f"Đang render video... {percent:.1f}%")
-
-        logger.info(f"  [Render] Đã nạp xong {total_frames} frames. Đang chờ FFmpeg hoàn thiện file...")
-    except Exception as e:
-        logger.info(f"\n  [Render] ⚠️ Lỗi trong quá trình bơm frame: {e}")
-        raise e
-    finally:
-        process.stdin.close()
-        process.wait()
-
-    check_ffmpeg_result(process, output_path, ffmpeg_log)
-
-    # Dọn dẹp rác (Garbage Collection)
-    if os.path.exists(temp_audio_path) and temp_audio_path != audio_path:
-        os.remove(temp_audio_path)
-        
-    try:
-        audio.close()
-        if bgm_mix_clip is not None:
-            bgm_mix_clip.close()
-        bg_clip.close()
-    except Exception:
-        pass
-        
-    # Ép Python dọn RAM ngay lập tức
-    import gc
-    gc.collect()
-
-    # Ghi nhận các video IDs đã dùng
-    try:
-        record_used_backgrounds(actually_used_assets)
-    except Exception as e:
-        logger.info(f"  [Video] ⚠️ Không thể lưu vết background đã dùng: {e}")
-
-    logger.info(f"\n✅ Video created successfully: {output_path}")
-    return output_path
-
-
-if __name__ == "__main__":
-    make_video("temp/audio.mp3", "temp/subtitles.srt")

@@ -1,14 +1,15 @@
 import os
+import platform
 import time
 import json
 import random
 import re
 import subprocess
 import numpy as np
-from moviepy.editor import AudioFileClip, ColorClip
 from playwright.sync_api import sync_playwright
 
 from core.utils.logger_config import logger
+from core.engines.tts import _get_audio_duration
 
 # Advance subtitle nhẹ để chữ hiện đúng lúc bắt đầu phát âm (bù thời gian animation).
 # Drift tích lũy MP3 đã được hiệu chỉnh tại tts.py nên chỉ cần lead nhỏ.
@@ -20,8 +21,9 @@ from core.engines.video_maker import (
     _prepare_visual_background,
     _select_video_encoder,
     _mix_audio_with_ducking,
+    _mix_audio_simple,
     _parse_srt,
-    record_used_backgrounds,
+    _ColorSource,
     open_ffmpeg_with_log,
     check_ffmpeg_result,
     VIDEO_WIDTH,
@@ -116,57 +118,27 @@ def _write_lazy_clip_to_file(bg_clip, filepath: str, duration: float, fps: int):
     check_ffmpeg_result(process, filepath, ffmpeg_log)
 
 
-def _prepare_bg_only_clip(duration: float, visual_mode: str, visual_sources: list, srt_path: str):
-    """Chuẩn bị background video giống hệt như logic trong video_maker.py."""
+def _prepare_bg_only_clip(duration: float, visual_sources: list, srt_path: str):
+    """Chuẩn bị background video từ ảnh/video người dùng upload, giống logic trong video_maker.py."""
     subs = _parse_srt(srt_path)
-    actually_used_assets = []
-    
+
     if not visual_sources:
-        bg_clip = ColorClip(size=(VIDEO_WIDTH, VIDEO_HEIGHT), color=(30, 30, 30), duration=duration)
-    else:
-        # LOGIC MULTI-SCENE
-        if not subs:
-            if visual_mode == "ai":
-                from core.engines import ai_visuals
-                bg_path = ai_visuals.generate_pollinations_image("tiktok story background")
-                bg_clip = _prepare_visual_background(bg_path, duration)
-                actually_used_assets = [bg_path]
-            else:
-                chosen_bg = random.choice(visual_sources)
-                bg_clip = _prepare_visual_background(chosen_bg, duration, visual_sources)
-                actually_used_assets = [chosen_bg]
-        else:
-            if visual_sources:
-                random.shuffle(visual_sources)
-            
-            if visual_mode == "ai":
-                from core.engines import ai_visuals
-                import concurrent.futures
-                logger.info(f"  [GSAP Render] Đang sinh {len(subs)} ảnh AI bằng đa luồng...")
-                
-                def generate_ai_bg(sub_item):
-                    return ai_visuals.generate_pollinations_image(sub_item["text"])
-                
-                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                    ai_images = list(executor.map(generate_ai_bg, subs))
-            else:
-                ai_images = []
-            
-            # LazyBackgroundClip để tránh tràn RAM
-            from core.engines.video_maker import LazyBackgroundClip
-            bg_clip = LazyBackgroundClip(subs, duration, visual_sources, visual_mode, ai_images)
-            actually_used_assets = bg_clip.actually_used
-            
-    if actually_used_assets:
-        record_used_backgrounds(actually_used_assets)
-        
-    return bg_clip
+        return _ColorSource(color=(30, 30, 30), duration=duration)
+
+    # LOGIC MULTI-SCENE
+    if not subs:
+        chosen_bg = random.choice(visual_sources)
+        return _prepare_visual_background(chosen_bg, duration, visual_sources)
+
+    # KHÔNG xáo trộn — giữ đúng thứ tự cảnh người dùng đặt tên (trợ lý "Hoạt hình Veo
+    # thủ công": clip 1_, 2_, 3_...).
+    from core.engines.video_maker import LazyBackgroundClip
+    return LazyBackgroundClip(subs, duration, visual_sources)
 
 
 def make_video_gsap(
     audio_path: str,
     srt_path: str,
-    bg_dir: str = "backgrounds",
     image_dir: str = "uploaded_images",
     output_path: str = "output/final_video.mp4",
     style: int = 1,
@@ -174,25 +146,23 @@ def make_video_gsap(
     bgm_path: str = None,
     bgm_start_sec: float = 0.0,
     bgm_volume: float = 0.22,
-    visual_mode: str = "pexels",
     uploaded_images=None,
     progress_callback=None
 ) -> str:
     """Tạo video sử dụng HTML/GSAP và chụp màn hình bằng Playwright, tăng tốc bằng GPU/iGPU."""
     logger.info("🚀 Bắt đầu render video bằng động cơ HTML/GSAP + Playwright...")
 
-    # 1. Load audio và xác định độ dài
+    # 1. Xác định độ dài audio
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Không tìm thấy file audio: {audio_path}")
-    audio = AudioFileClip(audio_path)
-    duration = audio.duration
+    duration = _get_audio_duration(audio_path)
     logger.info(f"  [GSAP Render] Audio Duration: {duration:.2f}s")
-    
-    # 2. Xử lý Trộn Nhạc Nền (BGM) giống video_maker.py
+
+    # 2. Xử lý Trộn Nhạc Nền (BGM) — toàn bộ bằng ffmpeg, không cần audio nếu không có BGM.
     ducked_audio_path = None
-    temp_audio_path = output_path.replace(".mp4", "_temp_audio.mp3")
+    temp_audio_path = audio_path
     bgm_volume = max(0.0, min(1.0, float(bgm_volume)))
-    
+
     if bgm_path and os.path.exists(bgm_path):
         logger.info(f"  [GSAP Render] Mixing BGM: {os.path.basename(bgm_path)}")
         candidate = output_path.replace(".mp4", "_ducked.mp3")
@@ -201,44 +171,19 @@ def make_video_gsap(
             temp_audio_path = candidate
             logger.info("  [GSAP Render] ✅ Đã áp dụng ducking (né giọng) thành công.")
         else:
-            logger.info("  [GSAP Render] ⚠️ Ducking thất bại, dùng MoviePy để trộn BGM.")
-            try:
-                bgm_clip = AudioFileClip(bgm_path)
-                bgm_start_sec = max(0.0, float(bgm_start_sec or 0.0))
-                if bgm_start_sec >= bgm_clip.duration:
-                    bgm_start_sec = 0.0
-                bgm_mix_clip = bgm_clip.subclip(bgm_start_sec, bgm_clip.duration)
-                if bgm_mix_clip.duration <= 0.05:
-                    bgm_mix_clip = bgm_clip
-                
-                from moviepy.audio.fx.all import audio_loop
-                bgm_mix_clip = audio_loop(bgm_mix_clip, duration=duration)
-                bgm_mix_clip = bgm_mix_clip.subclip(0, duration)
-                bgm_mix_clip = bgm_mix_clip.volumex(bgm_volume)
-                
-                from moviepy.editor import CompositeAudioClip
-                combined_audio = CompositeAudioClip([bgm_mix_clip, audio])
-                combined_audio.write_audiofile(temp_audio_path, fps=44100, logger=None)
-                logger.info("  [GSAP Render] ✅ Đã trộn nhạc nền thành công bằng MoviePy.")
-            except Exception as e:
-                logger.info(f"  [GSAP Render] ⚠️ Trộn nhạc nền thất bại: {e}. Sử dụng audio gốc.")
+            logger.info("  [GSAP Render] ⚠️ Ducking thất bại, dùng mix thường (ffmpeg amix).")
+            simple_candidate = output_path.replace(".mp4", "_temp_audio.mp3")
+            if _mix_audio_simple(audio_path, bgm_path, simple_candidate, duration, bgm_start_sec, bgm_volume):
+                temp_audio_path = simple_candidate
+                logger.info("  [GSAP Render] ✅ Đã trộn nhạc nền thành công (amix).")
+            else:
+                logger.info("  [GSAP Render] ⚠️ Trộn nhạc nền thất bại. Sử dụng audio gốc.")
                 temp_audio_path = audio_path
-    else:
-        # Không có BGM, export hoặc dùng luôn audio_path
-        try:
-            audio.write_audiofile(temp_audio_path, fps=44100, logger=None)
-        except Exception:
-            temp_audio_path = audio_path
 
     # 3. Chuẩn bị Visual Background Clip
-    visual_sources = _collect_visual_sources(
-        bg_dir=bg_dir,
-        image_dir=image_dir,
-        visual_mode=visual_mode,
-        uploaded_images=uploaded_images
-    )
-    
-    bg_clip = _prepare_bg_only_clip(duration, visual_mode, visual_sources, srt_path)
+    visual_sources = _collect_visual_sources(image_dir=image_dir, uploaded_images=uploaded_images)
+
+    bg_clip = _prepare_bg_only_clip(duration, visual_sources, srt_path)
     
     # 4. Xuất background-only video thành temp file để Playwright tải
     temp_bg_path = output_path.replace(".mp4", "_temp_bg.mp4")
@@ -247,17 +192,7 @@ def make_video_gsap(
     if progress_callback:
         progress_callback(35, "Đang xử lý tài nguyên nền...")
         
-    if hasattr(bg_clip, "write_videofile"):
-        bg_clip.write_videofile(
-            temp_bg_path,
-            fps=FPS,
-            codec="libx264",
-            audio=False,
-            preset="ultrafast",
-            logger=None
-        )
-    else:
-        _write_lazy_clip_to_file(bg_clip, temp_bg_path, duration, FPS)
+    _write_lazy_clip_to_file(bg_clip, temp_bg_path, duration, FPS)
     bg_clip.close()
 
     # 5. Phân tích Subtitles thành list cấp từ cho GSAP
@@ -297,7 +232,9 @@ def make_video_gsap(
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--enable-gpu", "--use-angle=metal"] if os.name != "nt" else ["--enable-gpu"]
+            # --use-angle=metal chỉ chạy được trên macOS — os.name != "nt" cũng khớp Linux,
+            # gắn nhầm ANGLE backend của Apple sẽ âm thầm gãy GPU-accel khi deploy Linux.
+            args=["--enable-gpu", "--use-angle=metal"] if platform.system() == "Darwin" else ["--enable-gpu"]
         )
         page = browser.new_page(viewport={"width": VIDEO_WIDTH, "height": VIDEO_HEIGHT})
         
@@ -348,26 +285,29 @@ def make_video_gsap(
 
     check_ffmpeg_result(process, output_path, ffmpeg_log)
 
-    # 7. Dọn dẹp các file rác trung gian để giữ ổ đĩa sạch sẽ
+    # 7. Tạo thumbnail — PHẢI làm TRƯỚC khi xoá temp_bg, và lấy frame từ temp_bg (nền sạch)
+    # chứ không phải từ video thành phẩm: video thành phẩm đã nung phụ đề vào hình, lấy frame
+    # từ đó sẽ ra ảnh bìa có 2 lớp chữ chồng nhau (phụ đề cũ + chữ hook mới) trông rất bẩn.
+    thumb_source = temp_bg_path if os.path.exists(temp_bg_path) else output_path
+    thumb = _generate_thumbnail(thumb_source, srt_path, style, duration, output_path=output_path)
+    if thumb:
+        logger.info(f"  [Thumbnail] ✅ Đã lưu: {thumb}")
+    else:
+        logger.info("  [Thumbnail] ⚠️ Không tạo được thumbnail, bỏ qua.")
+
+    # 8. Dọn dẹp các file rác trung gian để giữ ổ đĩa sạch sẽ
     for temp_f in [temp_bg_path, temp_audio_path]:
         if temp_f and temp_f != audio_path and os.path.exists(temp_f):
             try:
                 os.remove(temp_f)
             except Exception:
                 pass
-                
+
     if ducked_audio_path and os.path.exists(ducked_audio_path):
         try:
             os.remove(ducked_audio_path)
         except Exception:
             pass
-
-    # 8. Tạo thumbnail
-    thumb = _generate_thumbnail(output_path, srt_path, style, duration)
-    if thumb:
-        logger.info(f"  [Thumbnail] ✅ Đã lưu: {thumb}")
-    else:
-        logger.info("  [Thumbnail] ⚠️ Không tạo được thumbnail, bỏ qua.")
 
     logger.info(f"✅ Render GSAP hoàn tất! File lưu tại: {output_path}")
     if progress_callback:
@@ -376,12 +316,17 @@ def make_video_gsap(
     return output_path
 
 
-def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: float):
-    """Extract frame từ video đã render, overlay hook text, lưu _cover.jpg."""
+def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: float, output_path: str = None):
+    """Trích 1 frame từ `video_path` (nên là bản nền SẠCH chưa nung phụ đề), phủ chữ hook lên,
+    lưu thành `<output_path>_cover.jpg`.
+
+    `output_path` là video thành phẩm — dùng để đặt tên file bìa. Tách riêng khỏi `video_path`
+    vì frame nguồn lấy từ file nền tạm, không được đặt tên bìa theo file tạm đó.
+    """
     try:
         import io
         import shutil
-        from PIL import Image, ImageDraw, ImageFilter
+        from PIL import Image, ImageDraw
 
         # --- Màu accent theo style ---
         STYLE_COLORS = {
@@ -436,70 +381,72 @@ def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: fl
             if m:
                 hook = m.group(1).strip().replace("\n", " ")
 
+        thumb_path = (output_path or video_path).rsplit(".", 1)[0] + "_cover.jpg"
+
         if not hook:
-            img.convert("RGB").save(video_path.rsplit(".", 1)[0] + "_cover.jpg", quality=92)
-            return video_path.rsplit(".", 1)[0] + "_cover.jpg"
+            img.convert("RGB").save(thumb_path, quality=92)
+            return thumb_path
 
-        # --- 4. Tải font ---
+        # --- 4. Tải font + xuống dòng theo BỀ RỘNG THẬT ---
         from core.engines.video_maker import _get_font
-        FONT_SIZE = 88
-        font = _get_font(FONT_SIZE)
-        font_small = _get_font(int(FONT_SIZE * 0.55))
-
-        # --- 5. Word-wrap hook vào 2-3 dòng (max ~16 chars/line) ---
-        MAX_CHARS = 16
-        words = hook.split()
-        lines = []
-        cur = ""
-        for word in words:
-            if len(cur) + len(word) + 1 > MAX_CHARS and cur:
-                lines.append(cur)
-                cur = word
-            else:
-                cur += (" " + word) if cur else word
-        if cur:
-            lines.append(cur)
-        lines = lines[:3]  # tối đa 3 dòng
 
         draw = ImageDraw.Draw(img)
+        MAX_LINES = 4
+        MAX_TEXT_W = w - 160  # chừa lề 80px mỗi bên
 
-        LINE_H = FONT_SIZE + 24
+        def _wrap(text, font):
+            """Xuống dòng theo bề rộng pixel đo thật, không đếm ký tự.
+
+            Đếm ký tự (cách cũ) sai với tiếng Việt vì chữ có dấu và chữ hoa/thường rộng rất khác
+            nhau — dòng bị tràn hoặc ngắn hụt so với khung.
+            """
+            out, cur = [], ""
+            for word in text.split():
+                trial = f"{cur} {word}".strip()
+                if draw.textlength(trial, font=font) <= MAX_TEXT_W or not cur:
+                    cur = trial
+                else:
+                    out.append(cur)
+                    cur = word
+            if cur:
+                out.append(cur)
+            return out
+
+        # Thu nhỏ dần cho tới khi hook VỪA ĐỦ trong MAX_LINES dòng. Cách cũ cắt cụt còn 3 dòng
+        # (`lines[:3]`) làm câu hook đứt giữa chừng, mất luôn vế chốt — hỏng cả ý câu.
+        font_size = 88
+        while font_size >= 52:
+            font = _get_font(font_size)
+            lines = _wrap(hook, font)
+            if len(lines) <= MAX_LINES:
+                break
+            font_size -= 8
+        else:
+            font = _get_font(52)
+            lines = _wrap(hook, font)[:MAX_LINES]
+
+        # Tránh dòng cuối trơ trọi 1 từ ngắn (vd "vị.") — nhìn rất hụt trên ảnh bìa. Hạ thêm vài
+        # cỡ chữ thường là đủ để từ đó lùi lên dòng trên, chữ vẫn còn to.
+        while len(lines) > 1 and len(lines[-1].split()) == 1 and len(lines[-1]) <= 5 and font_size > 64:
+            font_size -= 6
+            font = _get_font(font_size)
+            lines = _wrap(hook, font)
+
+        LINE_H = int(font_size * 1.28)
         total_h = len(lines) * LINE_H
-        # Đặt text ở 40% chiều cao (vùng trung tâm-trên)
-        start_y = int(h * 0.38) - total_h // 2
+        # Căn giữa theo chiều dọc: ảnh bìa bị CROP hai đầu khi hiện ở lưới hồ sơ TikTok,
+        # chữ nằm giữa mới chắc chắn không bị cắt.
+        start_y = (h - total_h) // 2
 
         for i, line in enumerate(lines):
-            bbox = draw.textbbox((0, 0), line, font=font)
-            tw = bbox[2] - bbox[0]
-            x = (w - tw) // 2
+            tw = draw.textlength(line, font=font)
+            x = int((w - tw) // 2)
             y = start_y + i * LINE_H
-
-            # Stroke đen
-            stroke_color = (0, 0, 0, 220)
-            for dx, dy in [(-5, -5), (5, -5), (-5, 5), (5, 5),
-                           (0, -5), (0, 5), (-5, 0), (5, 0)]:
-                draw.text((x + dx, y + dy), line, font=font, fill=stroke_color)
-
-            # Dòng đầu màu accent (highlight), các dòng còn lại trắng
+            # stroke_width của Pillow cho viền đều mọi hướng, gọn hơn vẽ 8 lần lệch toạ độ.
             color = (*accent, 255) if i == 0 else (255, 255, 255, 255)
-            draw.text((x, y), line, font=font, fill=color)
+            draw.text((x, y), line, font=font, fill=color,
+                      stroke_width=6, stroke_fill=(0, 0, 0, 230))
 
-        # --- 6. Label nhỏ ở dưới ---
-        label = "▶ Xem ngay"
-        label_bbox = draw.textbbox((0, 0), label, font=font_small)
-        lw = label_bbox[2] - label_bbox[0]
-        lh = label_bbox[3] - label_bbox[1]
-        lx = (w - lw) // 2
-        ly = h - 220
-        # Pill background
-        pad = 18
-        draw.rounded_rectangle(
-            [lx - pad, ly - pad // 2, lx + lw + pad, ly + lh + pad // 2],
-            radius=30, fill=(*accent, 200)
-        )
-        draw.text((lx, ly), label, font=font_small, fill=(0, 0, 0, 255))
-
-        thumb_path = video_path.rsplit(".", 1)[0] + "_cover.jpg"
         img.convert("RGB").save(thumb_path, quality=92)
         return thumb_path
 

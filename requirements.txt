@@ -1,6 +1,6 @@
 # Core
 edge-tts
-moviepy==1.0.3
+opencv-python-headless
 imageio-ffmpeg
 numpy
 Pillow
@@ -8,9 +8,7 @@ python-dotenv
 requests
 flask
 flask-cors
+psutil
 
-# Tải video nền từ YouTube (bg_fetcher)
-yt-dlp
-
-# Browser automation (lấy TikTok session tự động)
+# Browser automation (lấy TikTok session tự động, render GSAP)
 playwright

@@ -2,9 +2,15 @@ import requests
 import base64
 import os
 import re
+import threading
 from dotenv import load_dotenv
 from core.utils.logger_config import logger
 load_dotenv()
+
+# 2 job render có thể chạy song song (ThreadPoolExecutor trong app.py) và cùng phát hiện
+# session hết hạn cùng lúc — khoá này đảm bảo chỉ 1 cửa sổ đăng nhập TikTok mở tại 1 thời
+# điểm, job tới sau chờ rồi dùng lại session job trước vừa lấy được thay vì mở thêm cửa sổ.
+_session_login_lock = threading.Lock()
 
 
 def _save_session_to_env(session_id: str):
@@ -95,8 +101,6 @@ def login_and_get_tiktok_session() -> str:
     Lưu vào .env và tiktok_session.txt rồi trả về session_id.
     Chạy playwright trong thread riêng để tương thích với asyncio event loop.
     """
-    import threading
-
     logger.info("  [TikTok] Mở trình duyệt để đăng nhập TikTok...")
     logger.info("  [TikTok] Hãy đăng nhập vào TikTok trong cửa sổ trình duyệt vừa mở.")
     logger.info("  [TikTok] Session sẽ được tự động lưu sau khi đăng nhập thành công.")
@@ -123,6 +127,19 @@ def login_and_get_tiktok_session() -> str:
     logger.info("  [TikTok] ✅ Đăng nhập thành công! Session đã được lưu vào tiktok_session.txt.")
     return session_id
 
+def _ensure_fresh_session(stale_session_id: str = None) -> str:
+    """Lấy session TikTok mới, có khoá để 2 job cùng lúc không mở 2 cửa sổ trình duyệt song
+    song. Job tới sau khi chờ được khoá sẽ kiểm tra lại: nếu job trước đã login xong và ghi
+    session mới (khác `stale_session_id`), dùng luôn — chỉ thực sự mở trình duyệt khi chưa
+    ai vừa refresh."""
+    with _session_login_lock:
+        current = _load_session()
+        if current and current != stale_session_id:
+            _save_session_to_env(current)
+            return current
+        return login_and_get_tiktok_session()
+
+
 TIKTOK_VOICES = {
     # Nữ
     "tiktok_nu_1": "BV074_streaming", # Giọng nữ ấm áp (thay thế vi_vn_001)
@@ -135,17 +152,13 @@ TIKTOK_VOICES = {
 def _mp3_bytes_duration(seg_bytes: bytes) -> float:
     """Đo độ dài (giây) của một đoạn mp3 từ bytes. Trả 0.0 nếu lỗi."""
     import tempfile
+    from core.engines.tts import _get_audio_duration
     tmp = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             f.write(seg_bytes)
             tmp = f.name
-        from moviepy.editor import AudioFileClip
-        clip = AudioFileClip(tmp)
-        try:
-            return float(clip.duration or 0.0)
-        finally:
-            clip.close()
+        return float(_get_audio_duration(tmp) or 0.0)
     except Exception:
         return 0.0
     finally:
@@ -177,7 +190,7 @@ def generate_tiktok_tts(text: str, voice: str, output_file: str):
     session_id = _load_session()
     if not session_id:
         logger.warning("  [TikTok TTS] Chưa có session — mở trình duyệt để đăng nhập...")
-        session_id = login_and_get_tiktok_session()
+        session_id = _ensure_fresh_session(stale_session_id=None)
 
     import time
     
@@ -319,8 +332,8 @@ def generate_tiktok_tts(text: str, voice: str, output_file: str):
                     for kw in ("session", "login", "auth", "token", "unauthorized", "invalid user")
                 )
                 if session_expired and not session_refreshed:
-                    logger.warning(f"  [TikTok TTS] Session hết hạn ở đoạn {idx+1} (mã {status_code}) — mở trình duyệt để đăng nhập lại...")
-                    session_id = login_and_get_tiktok_session()
+                    logger.warning(f"  [TikTok TTS] Session hết hạn ở đoạn {idx+1} (mã {status_code}) — đang lấy session mới...")
+                    session_id = _ensure_fresh_session(stale_session_id=session_id)
                     headers["Cookie"] = f"sessionid={session_id}"
                     session_refreshed = True
                     # Retry chunk này với session mới

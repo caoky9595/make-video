@@ -38,5 +38,24 @@ export const api = {
     });
     if (!res.ok) throw new Error(`Upload Error: ${res.statusText}`);
     return res.json();
+  },
+
+  async del(endpoint: string, data: any) {
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+        let errStr = res.statusText;
+        try {
+            const errData = await res.json();
+            if (errData.error) errStr = errData.error;
+        } catch(e) {}
+        throw new Error(errStr);
+    }
+    return res.json();
   }
 };

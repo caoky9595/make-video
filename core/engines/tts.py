@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 import time
 
 import edge_tts
@@ -20,6 +21,41 @@ from dotenv import load_dotenv
 from core.utils.logger_config import logger
 
 load_dotenv()
+
+FPT_USAGE_FILE = "temp/fpt_usage.json"
+_fpt_usage_lock = threading.Lock()
+
+
+def _record_fpt_chars_used(char_count: int) -> None:
+    """Cộng dồn số ký tự đã gửi qua FPT.AI (free tier 100k ký tự/tháng), reset theo tháng —
+    để dashboard (/api/stats) hiển thị số dùng thật thay vì số giả cố định."""
+    with _fpt_usage_lock:
+        os.makedirs("temp", exist_ok=True)
+        month = time.strftime("%Y-%m")
+        data = {"month": month, "used": 0}
+        if os.path.exists(FPT_USAGE_FILE):
+            try:
+                with open(FPT_USAGE_FILE, "r") as f:
+                    loaded = json.load(f)
+                if loaded.get("month") == month:
+                    data = loaded
+            except Exception:
+                pass
+        data["used"] = data.get("used", 0) + char_count
+        with open(FPT_USAGE_FILE, "w") as f:
+            json.dump(data, f)
+
+
+def get_fpt_chars_used() -> int:
+    """Đọc số ký tự FPT.AI đã dùng trong tháng hiện tại."""
+    try:
+        with open(FPT_USAGE_FILE, "r") as f:
+            data = json.load(f)
+        if data.get("month") != time.strftime("%Y-%m"):
+            return 0
+        return int(data.get("used", 0))
+    except Exception:
+        return 0
 
 # ============================================================
 # DANH SÁCH GIỌNG ĐỌC
@@ -143,6 +179,36 @@ def parse_script(raw_text: str) -> str:
 
 
 # ============================================================
+# UTILITY: Trọng số thời gian đọc/ngừng theo từ (dùng khi phải NỘI SUY word timing,
+# tức không có timestamp thật từ TTS engine cho từng từ)
+# ============================================================
+
+def _word_speak_and_pause_weight(word: str) -> tuple:
+    """Trả về (trọng số thời gian NÓI, trọng số thời gian NGỪNG ngay sau từ này).
+
+    Tiếng Việt là ngôn ngữ đơn âm tiết theo nhịp gần đều — trọng số nói gần bằng nhau cho
+    mọi từ, chỉ cộng thêm cho token dài bất thường (số/từ mượn tiếng Anh viết liền).
+
+    Nếu chỉ chia đều theo độ dài mà bỏ qua dấu câu, các từ sau dấu phẩy/chấm sẽ bị gán thời
+    điểm bắt đầu SỚM hơn thực tế — vì giọng đọc thật có ngừng hơi ở đó nhưng phép chia đều
+    coi cả câu là nói liên tục không nghỉ. Hệ quả: phụ đề "nhảy" sang từ/cụm tiếp theo trước
+    khi giọng đọc thật sự nói tới, và càng về cuối câu càng lệch nhiều (lỗi cộng dồn theo
+    số dấu câu đã đi qua). Cộng thêm trọng số ngừng sau mỗi dấu câu để mô phỏng đúng quãng
+    nghỉ đó, giữ từ tiếp theo không bị đẩy sớm.
+    """
+    speak_weight = 1.0 + max(0, len(word) - 6) * 0.15
+    stripped = word.rstrip("\"'”’)]»")
+    pause_weight = 0.0
+    if stripped.endswith("...") or stripped.endswith("…"):
+        pause_weight = 1.4  # ngừng dài nhất — bỏ lửng câu
+    elif stripped.endswith((".", "!", "?")):
+        pause_weight = 1.1  # ngừng hết câu
+    elif stripped.endswith((",", ";", ":")):
+        pause_weight = 0.6  # ngừng hơi giữa câu
+    return speak_weight, pause_weight
+
+
+# ============================================================
 # ENGINE 1: EDGE-TTS (Microsoft)
 # ============================================================
 
@@ -180,32 +246,33 @@ async def _generate_edge_tts(text: str, output_audio: str, output_srt: str, rate
                 # Feed WordBoundary và SentenceBoundary cho SubMaker
                 submaker.feed(chunk)
 
-    # Nếu không có WordBoundary (do giọng không hỗ trợ), ta nội suy (interpolate) từ SentenceBoundary
+    # Nếu không có WordBoundary (do giọng không hỗ trợ), ta nội suy (interpolate) từ SentenceBoundary.
+    # Dùng trọng số nói gần-đều + trọng số ngừng sau dấu câu (_word_speak_and_pause_weight) thay vì
+    # chia thẳng theo tỉ lệ ký tự — cách cũ làm highlight từ lệch khỏi nhịp giọng đọc thật, và các
+    # từ sau dấu câu bị nhảy sub sớm hơn lúc giọng đọc thật sự nói tới.
     if not word_boundaries and sentence_boundaries:
         logger.info("  [TTS] WordBoundary not supported by this voice. Interpolating word timings...")
         for sb in sentence_boundaries:
             s_text = sb["text"]
             s_offset = sb["offset"]
             s_duration = sb["duration"]
-            s_len = len(s_text)
-            
+
             words_in_sentence = s_text.split()
+            if not words_in_sentence:
+                continue
+            speak_weights, pause_weights = zip(*(_word_speak_and_pause_weight(w) for w in words_in_sentence))
+            total_weight = sum(speak_weights) + sum(pause_weights) or 1
+            unit = s_duration / total_weight
             current_offset = s_offset
-            for w in words_in_sentence:
-                w_len = len(w)
-                if s_len > 0:
-                    w_duration = int(s_duration * (w_len / s_len))
-                    space_duration = int(s_duration * (1 / s_len))
-                else:
-                    w_duration = 0
-                    space_duration = 0
-                
+            for w, speak_w, pause_w in zip(words_in_sentence, speak_weights, pause_weights):
+                w_duration = int(speak_w * unit)
+
                 word_boundaries.append({
                     "text": w,
                     "offset": current_offset,
                     "duration": w_duration
                 })
-                current_offset += w_duration + space_duration
+                current_offset += w_duration + int(pause_w * unit)
 
     # Xuất file JSON chứa chi tiết từng từ
     words_data = _build_words_json(word_boundaries)
@@ -269,6 +336,8 @@ def _generate_fpt_tts(text: str, output_audio: str, output_srt: str, rate: str, 
 
     if result.get("error") and result["error"] != 0:
         raise RuntimeError(f"FPT.AI API error: {result.get('message', 'Unknown error')}")
+
+    _record_fpt_chars_used(len(text))
 
     # FPT.AI trả về async link → cần đợi audio sẵn sàng
     audio_url = result.get("async")
@@ -341,29 +410,34 @@ def _get_audio_duration(audio_path: str) -> float:
 def _interpolate_word_timing_from_audio(text: str, audio_path: str) -> list:
     """
     Nội suy word timing từ thời lượng audio.
-    Chia đều thời gian cho mỗi từ dựa trên độ dài ký tự.
+
+    Dùng trọng số nói gần-đều + trọng số ngừng sau dấu câu (_word_speak_and_pause_weight)
+    thay vì chia thẳng theo tỉ lệ ký tự, để highlight từ bám sát nhịp giọng đọc thật hơn —
+    và không bị nhảy sang từ kế tiếp trước khi giọng đọc thật sự nói tới sau mỗi dấu câu.
     """
     duration = _get_audio_duration(audio_path)
     words = text.split()
-    
+
     if not words:
         return []
 
-    total_chars = sum(len(w) for w in words)
-    if total_chars == 0:
+    speak_weights, pause_weights = zip(*(_word_speak_and_pause_weight(w) for w in words))
+    total_weight = sum(speak_weights) + sum(pause_weights)
+    if total_weight == 0:
         return []
+    unit = duration / total_weight
 
     words_data = []
     current_time = 0.0
 
-    for word in words:
-        word_duration = duration * (len(word) / total_chars)
+    for word, speak_w, pause_w in zip(words, speak_weights, pause_weights):
+        word_duration = speak_w * unit
         words_data.append({
             "text": word,
             "start": round(current_time, 3),
             "end": round(current_time + word_duration, 3),
         })
-        current_time += word_duration
+        current_time += word_duration + pause_w * unit
 
     return words_data
 
@@ -417,12 +491,7 @@ def _build_words_json(word_boundaries: list) -> list:
 def _audio_duration(path: str) -> float:
     """Đọc độ dài (giây) của file audio. Trả 0.0 nếu không đọc được."""
     try:
-        from moviepy.editor import AudioFileClip
-        clip = AudioFileClip(path)
-        try:
-            return float(clip.duration or 0.0)
-        finally:
-            clip.close()
+        return float(_get_audio_duration(path) or 0.0)
     except Exception as e:
         logger.info(f"  [TTS] ⚠️ Không đọc được độ dài audio {path}: {e}")
         return 0.0
@@ -505,13 +574,20 @@ def _build_timing_from_chunks(chunk_durations: list, output_srt: str):
             t += dur
             continue
 
-        total_chars = sum(len(w) for w in tokens) or 1
+        # TikTok TTS chỉ tách chunk tại dấu KẾT CÂU (.!?) và tự chèn silence đo thật giữa các
+        # chunk — nhưng dấu phẩy/chấm phẩy giữa câu, hoặc trường hợp nhiều câu ngắn gộp chung 1
+        # chunk (dưới MAX_CHUNK ký tự), thì bên trong 1 chunk vẫn cần trọng số ngừng sau dấu câu
+        # (_word_speak_and_pause_weight) — nếu không, các từ sau dấu câu bị nhảy sub sớm hơn lúc
+        # giọng đọc thật sự nói tới, và lệch cộng dồn tăng dần theo số dấu câu trong chunk.
+        speak_weights, pause_weights = zip(*(_word_speak_and_pause_weight(w) for w in tokens))
+        total_weight = sum(speak_weights) + sum(pause_weights) or 1
+        unit = dur / total_weight
         block_start = t
         wt = t
-        for w in tokens:
-            w_dur = dur * (len(w) / total_chars)
+        for w, speak_w, pause_w in zip(tokens, speak_weights, pause_weights):
+            w_dur = speak_w * unit
             words_data.append({"text": w, "start": round(wt, 4), "end": round(wt + w_dur, 4)})
-            wt += w_dur
+            wt += w_dur + pause_w * unit
         block_end = t + dur
 
         srt_lines.append(str(idx))
