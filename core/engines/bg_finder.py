@@ -15,8 +15,38 @@ from core.utils.logger_config import logger
 load_dotenv()
 
 
-def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 2, initial_delay: float = 1.0) -> dict:
-    """Gọi Gemini API bằng urllib với cơ chế retry nhanh."""
+# Model Gemini dùng cho mọi tác vụ sinh chữ (ý tưởng/kịch bản/prompt cảnh/caption).
+# KHÔNG dùng alias `gemini-flash-latest`: alias luôn trỏ tới bản flash mới nhất, mà bản mới nhất
+# là bản đông nhất — đo thực tế 24/08/2026 cho thấy alias này 0/3 request thành công (timeout +
+# 429), còn bản ghim `gemini-2.5-flash` 3/3 thành công, trễ TB 1,4s. Ghim phiên bản cụ thể để
+# tính ổn định không phụ thuộc việc Google trỏ alias sang đâu.
+# Đổi nhanh bằng biến môi trường GEMINI_MODEL trong .env nếu sau này model này chậm/bị bỏ.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Mã lỗi HTTP đáng thử lại: 429 = vượt rate limit, còn 5xx là lỗi TẠM THỜI phía Google
+# (503 = model đang quá tải — hay gặp nhất ở free tier vào giờ cao điểm). Trước đây chỉ retry
+# 429, nên 503 bị `raise` ngay lập tức và bỏ Gemini luôn dù chỉ cần thử lại sau 1-2 giây là được.
+GEMINI_RETRYABLE_CODES = (429, 500, 502, 503, 504)
+
+# Không đặt timeout thì urlopen có thể treo VÔ HẠN — lúc Gemini chậm, cả request của người dùng
+# treo theo thay vì fail nhanh để nhảy sang Groq.
+# Con số 30s lấy theo TẢI THẬT: sinh prompt cảnh (3-5 prompt tiếng Anh 40-60 từ, trả JSON) đo
+# được ~9-11s khi thành công. Đừng hạ về ~12s: sát mép quá nên timeout chập chờn dù Gemini vẫn
+# đang chạy bình thường (đã bị đúng lỗi này khi hiệu chỉnh bằng prompt ngắn 1 từ, chỉ mất 1,4s).
+GEMINI_TIMEOUT_SEC = 30
+
+# Tổng thời gian tối đa dành cho Gemini trước khi bỏ sang Groq. Cần cái này vì 2 loại lỗi có
+# giá rất khác nhau: 503 trả về NGAY (retry gần như miễn phí), còn timeout ngốn đủ 30s mỗi lần.
+# Không có ngân sách tổng thì gặp chuỗi timeout là người dùng phải chờ cả phút — trong khi Groq
+# vẫn rảnh và miễn phí. Hết ngân sách thì dừng thử, nhảy sang Groq luôn.
+GEMINI_TOTAL_BUDGET_SEC = 35
+
+
+def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 4, initial_delay: float = 0.8) -> dict:
+    """Gọi Gemini API bằng urllib, retry các lỗi tạm thời (429 + 5xx) với backoff.
+
+    Dừng sớm khi hết GEMINI_TOTAL_BUDGET_SEC để không bắt người dùng chờ quá lâu.
+    """
     import urllib.request
     import urllib.error
     import json
@@ -24,6 +54,7 @@ def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 2, initia
 
     delay = initial_delay
     last_err = None
+    started = time.monotonic()
 
     for attempt in range(max_retries):
         req = urllib.request.Request(
@@ -32,21 +63,30 @@ def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 2, initia
             headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT_SEC) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             last_err = e
-            if e.code == 429:
-                logger.warning(f"  [Gemini API] Rate limit (429) during keyword gen. Retrying in {delay}s...")
-                time.sleep(delay)
-                delay *= 2
-                continue
-            raise e
-        except Exception as e:
-            last_err = e
+            # Lỗi vĩnh viễn (400 sai payload, 401/403 sai key, 404 sai model...) thì retry vô
+            # nghĩa — thoát ngay để nhảy sang Groq cho nhanh.
+            if e.code not in GEMINI_RETRYABLE_CODES:
+                raise e
+            if attempt == max_retries - 1 or time.monotonic() - started + delay > GEMINI_TOTAL_BUDGET_SEC:
+                break
+            logger.warning(
+                f"  [Gemini API] Lỗi tạm thời HTTP {e.code} "
+                f"({'quá tải' if e.code >= 500 else 'rate limit'}), thử lại sau {delay}s..."
+            )
             time.sleep(delay)
             delay *= 2
-            continue
+        except Exception as e:
+            # Timeout/lỗi mạng — cũng là tạm thời, vẫn thử lại.
+            last_err = e
+            if attempt == max_retries - 1 or time.monotonic() - started + delay > GEMINI_TOTAL_BUDGET_SEC:
+                break
+            logger.warning(f"  [Gemini API] {type(e).__name__}, thử lại sau {delay}s...")
+            time.sleep(delay)
+            delay *= 2
 
     if last_err:
         raise last_err
@@ -74,6 +114,10 @@ def call_groq(prompt: str, json_mode: bool = False, model: str = "openai/gpt-oss
         "model": model,
         "messages": [{"role": "user", "content": full_prompt}],
         "temperature": 0.8,
+        # Không đặt max_tokens thì Groq dùng mặc định khá thấp -> JSON dài bị CẮT GIỮA DÒNG,
+        # json.loads ném "Unterminated string" và toàn bộ prompt cảnh rơi về mô tả chung chung.
+        # Sinh 5 prompt cảnh (mỗi cái ~110 từ) tốn khoảng 2.000+ ký tự JSON nên phải nới hẳn ra.
+        "max_tokens": 4096,
     }
     req = urllib.request.Request(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -103,7 +147,7 @@ def call_llm_with_fallback(prompt: str, json_mode: bool = False) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
     if api_key:
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={api_key}"
             payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.8}}
             if json_mode:
                 payload["generationConfig"]["response_mime_type"] = "application/json"
@@ -237,6 +281,33 @@ FALLBACK_SCENE_DESCRIPTION = (
 )
 
 
+# Đại từ/danh từ chỉ NAM -> nữ. Lưới an toàn CUỐI: dặn AI trong prompt là chưa đủ tin cậy (đo thực
+# tế vẫn lọt đại từ), mà 1 chữ "he" lọt vào là mâu thuẫn ngay với "a ... woman" trong mô tả nhân
+# vật, khiến Veo vẽ sai giới tính ở đúng cảnh đó. Sửa bằng code thì chắc chắn 100%.
+# Thay dài trước ngắn (himself trước him trước he) để không cắt nhầm giữa từ.
+_MASCULINE_FIXES = [
+    (r"\bhimself\b", "herself"),
+    (r"\bHimself\b", "Herself"),
+    (r"\bhis\b", "her"),
+    (r"\bHis\b", "Her"),
+    (r"\bhim\b", "her"),
+    (r"\bHim\b", "Her"),
+    (r"\bhe\b", "she"),
+    (r"\bHe\b", "She"),
+    (r"\bman\b", "woman"),
+    (r"\bmale\b", "female"),
+    (r"\bboy\b", "girl"),
+    (r"\bguy\b", "woman"),
+]
+
+
+def _force_feminine(text: str) -> str:
+    """Ép mọi đại từ/danh từ chỉ nam trong prompt cảnh về nữ, khớp với mascot Bống (nữ)."""
+    for pattern, repl in _MASCULINE_FIXES:
+        text = re.sub(pattern, repl, text)
+    return text
+
+
 def _generic_scene_fallback(sub_texts: list) -> list:
     """Fallback khi cả Gemini lẫn Groq đều lỗi: dùng 1 mô tả cảnh chung chung nhưng đúng ngách
     (tiếng Anh) cho mọi câu."""
@@ -275,30 +346,60 @@ Nhiệm vụ:
    Video"): "{MASCOT_DESCRIPTION}". Bối cảnh/setting (phòng ngủ, văn phòng, công viên...) được phép
    ĐỔI theo từng cảnh cho hợp nội dung câu thoại đó — chỉ mô tả nhân vật ở trên là cố định, không
    được diễn giải lại hay đổi chi tiết ngoại hình.
-2. Với MỖI câu thoại, viết 1 prompt tiếng Anh đầy đủ (40-60 từ), LUÔN bắt đầu bằng đúng nguyên văn mô
-   tả nhân vật ở bước 1, rồi bổ sung thêm đúng 3 thành phần sau cho riêng cảnh đó, viết dạng CỤM TỪ
-   miêu tả nối bằng dấu phẩy (như cách viết prompt ảnh chuẩn), TUYỆT ĐỐI KHÔNG viết thành câu đầy đủ
-   có chủ ngữ/đại từ nhân xưng (không dùng "she/he/her/his/woman/man" lặp lại) — nhân vật đã nêu rõ ở
-   đầu prompt rồi, thêm đại từ ở sau chỉ thừa và có rủi ro AI lỡ dùng NHẦM GIỚI TÍNH (vd viết "he")
-   mâu thuẫn ngay với mô tả "a ... woman" phía trên, khiến Veo vẽ sai giới tính nhân vật ở cảnh đó:
-   - Bối cảnh phù hợp với nội dung câu thoại (vd phòng ngủ ban đêm cho chủ đề mất ngủ, bàn làm việc cho chủ đề trì hoãn).
-   - Góc máy/cỡ cảnh (vd "extreme close-up on face", "top-down shot", "medium shot at eye level").
-   - Ánh sáng/tông màu truyền tải đúng cảm xúc (vd "cold blue nighttime glow" cho lo âu, "warm golden light" cho nhẹ nhõm/ấm áp).
-   Ví dụ ĐÚNG (cụm từ, không chủ ngữ): "...lavender pastel palette, standing in a dim bedroom at night, staring blankly at the ceiling, eyes wide with worry, close-up on face, cold blue nighttime glow."
-   Ví dụ SAI (câu đầy đủ có đại từ, KHÔNG viết kiểu này): "...lavender pastel palette, she is lying in a dim bedroom and her eyes stare blankly at the ceiling..."
+2. Với MỖI câu thoại, viết 1 prompt tiếng Anh gồm 2 phần ghép liền:
+   (a) NGUYÊN VĂN mô tả nhân vật ở bước 1 (không đổi 1 chữ), rồi
+   (b) phần CẢNH RIÊNG dài 40-60 TỪ — đếm riêng, KHÔNG tính số từ của phần (a).
+   Phần (b) BẮT BUỘC có đủ 5 thứ, thiếu bất kỳ thứ nào là prompt hỏng:
+   - HÀNH ĐỘNG CỤ THỂ đang diễn ra (vd "slumped over a desk pushing a laptop away", "scrolling a phone
+     under the blanket", "freezing mid-reach for a coffee cup") — KHÔNG được chỉ ghi địa điểm suông.
+   - BIỂU CẢM MẶT + NGÔN NGỮ CƠ THỂ (vd "jaw tight, eyes darting away", "shoulders sagging, faint
+     defeated smile", "eyebrows lifting in slow realisation").
+   - CHI TIẾT BỐI CẢNH gợi đúng nội dung câu thoại (vd "half-finished to-do list and 3 empty mugs",
+     "clock reading 2AM", "sticky notes peeling off a monitor") — chi tiết nhỏ kể được câu chuyện.
+   - GÓC MÁY/CỠ CẢNH (vd "extreme close-up on face", "top-down shot", "medium shot at eye level").
+   - ÁNH SÁNG/TÔNG MÀU đúng cảm xúc (vd "cold blue nighttime glow" cho lo âu, "warm golden light" cho
+     nhẹ nhõm).
+   CÁCH VIẾT: ưu tiên CỤM PHÂN TỪ nối bằng dấu phẩy ("standing...", "clutching...", "brow furrowing...")
+   vì vừa giàu hình ảnh vừa không cần chủ ngữ. Chỗ nào bắt buộc phải có đại từ cho câu tự nhiên
+   ("on her back", "over her shoulder") thì CHỈ ĐƯỢC dùng đại từ NỮ: she/her/hers. TUYỆT ĐỐI KHÔNG
+   dùng he/his/him — nhân vật là NỮ, lỡ viết "he" là mâu thuẫn ngay với "a ... woman" ở phần (a),
+   Veo sẽ vẽ sai giới tính. Đừng vì né đại từ mà viết cụt lủn — nội dung giàu quan trọng hơn.
+   Ví dụ ĐÚNG (giàu nội dung, không đại từ — viết theo kiểu này):
+     "...lavender pastel palette, slumped in a desk chair at 2AM, pushing the laptop away with one
+     fingertip, jaw tight and eyes avoiding the screen, a half-written document and three empty mugs
+     beside a glowing phone, extreme close-up on face at eye level, cold blue monitor glow against
+     deep shadows."
+   Ví dụ SAI 1 — chỉ liệt kê từ khoá suông, KHÔNG có hành động/biểu cảm (đây là lỗi HAY GẶP NHẤT,
+   phải tránh): "...lavender pastel palette, home desk night, extreme close-up, cold blue soft glow"
+   Ví dụ SAI 2 — dùng đại từ: "...lavender pastel palette, she is lying in bed and her eyes stare..."
 3. QUAN TRỌNG — ưu tiên hàng đầu: mô tả 1 KHOẢNH KHẮC ĐỜI THƯỜNG RELATABLE thể hiện đúng cảm xúc/tình huống của câu thoại đó (vd nằm trên giường nhìn trần nhà cho chủ đề mất ngủ, giật mình nhìn đồng hồ cho chủ đề trì hoãn, biểu cảm ngạc nhiên/xoà tay lên đầu cho 1 sự thật bất ngờ). Đây là yếu tố quan trọng nhất để người xem thấy "đúng là mình" — ưu tiên biểu cảm khuôn mặt và ngôn ngữ cơ thể rõ ràng hơn là hành động chung chung. Chuyển động NHẸ NHÀNG TỰ NHIÊN (subtle motion — thở dài, chớp mắt, quay đầu chậm) — KHÔNG chuyển động quá đà/kịch tính, vì phong cách anime slice-of-life hợp với tiết chế hơn là phô diễn.
 4. Một số câu thoại ở trên có thể đã GỘP nhiều câu gốc lại (1 cảnh phủ nhiều ý) vì mỗi cảnh = 1 lần tạo clip Flow ~{scene_duration_sec} giây, không thể diễn hết nhiều khoảnh khắc khác nhau trong 1 clip ngắn. Khi đó, CHỌN MỘT khoảnh khắc/cảm xúc đại diện, rõ nét nhất trong câu để mô tả — KHÔNG cố liệt kê hết mọi ý vào 1 prompt.
 5. Chỉ mô tả hình ảnh (chủ thể, biểu cảm, bối cảnh, góc máy, ánh sáng), KHÔNG chèn lời thoại hay chữ viết vào ảnh.
 
-CHỈ TRẢ VỀ JSON array đúng {len(sub_texts)} phần tử (mỗi phần tử là 1 prompt tiếng Anh đầy đủ 40-60 từ cho câu tương ứng, đủ các thành phần ở trên), theo đúng thứ tự: ["prompt cảnh 1", "prompt cảnh 2", ...]
+TỰ KIỂM TRA trước khi trả về — với TỪNG prompt, bỏ phần mô tả nhân vật ra, phần còn lại có nêu rõ
+nhân vật ĐANG LÀM GÌ và MẶT MŨI/DÁNG NGƯỜI THẾ NÀO không? Nếu phần còn lại chỉ là mấy từ khoá địa
+điểm + góc máy + ánh sáng thì prompt đó BỊ RỖNG, phải viết lại cho đủ hành động và biểu cảm.
+Mỗi cảnh phải có hành động/bối cảnh KHÁC nhau rõ rệt — không được 3 cảnh cùng một kiểu ngồi ở bàn.
+
+CHỈ TRẢ VỀ JSON array đúng {len(sub_texts)} phần tử (mỗi phần tử = mô tả nhân vật nguyên văn + 40-60
+từ cảnh riêng giàu hành động/biểu cảm), theo đúng thứ tự: ["prompt cảnh 1", "prompt cảnh 2", ...]
 """
 
     try:
         content = call_llm_with_fallback(prompt, json_mode=True)
         prompts = json.loads(content)
         if isinstance(prompts, list) and len(prompts) == len(sub_texts):
-            return prompts
+            return [_force_feminine(str(x)) for x in prompts]
         logger.warning(f"  [Scene Prompts] AI trả về {len(prompts) if isinstance(prompts, list) else 'không phải list'} phần tử, cần {len(sub_texts)}. Dùng fallback.")
+        return _generic_scene_fallback(sub_texts)
+    except json.JSONDecodeError as e:
+        # Hay gặp nhất: model trả JSON bị cắt vì hết token. Log độ dài + đuôi chuỗi để lần sau
+        # nhìn log là biết ngay bị cắt hay sai định dạng, không phải ngồi dò lại từ đầu.
+        raw = locals().get("content", "")
+        logger.warning(
+            f"  [Scene Prompts] JSON lỗi ({e}). Độ dài phản hồi {len(raw)} ký tự, "
+            f"đuôi: {raw[-80:]!r}. Nghi bị cắt do hết token -> dùng fallback."
+        )
         return _generic_scene_fallback(sub_texts)
     except Exception as e:
         logger.info(f"  [Scene Prompts] Error: {e}. Dùng mô tả cảnh chung chung làm fallback.")
