@@ -15,13 +15,31 @@ from core.utils.logger_config import logger
 load_dotenv()
 
 
-# Model Gemini dùng cho mọi tác vụ sinh chữ (ý tưởng/kịch bản/prompt cảnh/caption).
-# KHÔNG dùng alias `gemini-flash-latest`: alias luôn trỏ tới bản flash mới nhất, mà bản mới nhất
-# là bản đông nhất — đo thực tế 24/08/2026 cho thấy alias này 0/3 request thành công (timeout +
-# 429), còn bản ghim `gemini-2.5-flash` 3/3 thành công, trễ TB 1,4s. Ghim phiên bản cụ thể để
-# tính ổn định không phụ thuộc việc Google trỏ alias sang đâu.
-# Đổi nhanh bằng biến môi trường GEMINI_MODEL trong .env nếu sau này model này chậm/bị bỏ.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# DANH SÁCH model Gemini thử lần lượt, KHÔNG phải 1 model duy nhất.
+# Lý do: free tier giới hạn theo quota `GenerateRequestsPerDayPerProjectPerModel` = 20 request/NGÀY,
+# và chữ "PerModel" nghĩa là MỖI MODEL CÓ HẠN MỨC RIÊNG. Hết 20 lượt của model này thì chuyển sang
+# model khác vẫn còn nguyên 20 lượt — xếp tầng 3 model là có ~60 lượt/ngày thay vì 20.
+# Thứ tự xếp theo độ ổn định đo thực tế 24/08/2026 (mỗi model gọi thử nhiều lần):
+#   gemini-2.5-flash  3/3 và 4/4 OK, trễ TB 1,4s  <- tốt nhất
+#   gemini-3.5-flash  3/3 OK, trễ TB 2,1s
+# KHÔNG dùng alias `gemini-flash-latest`: alias trỏ tới bản flash mới nhất, cũng là bản đông nhất —
+# đo được 0/3 và 2/8 request thành công (timeout + 503). Luôn ghim phiên bản cụ thể.
+# Đổi nhanh bằng biến môi trường GEMINI_MODEL (nhiều model cách nhau bằng dấu phẩy).
+GEMINI_MODELS = [
+    m.strip() for m in os.environ.get(
+        "GEMINI_MODEL", "gemini-2.5-flash,gemini-3.5-flash,gemini-flash-lite-latest"
+    ).split(",") if m.strip()
+]
+
+# Groq tính CẢ max_tokens vào hạn mức token/phút (đo được x-ratelimit-limit-tokens: 8000 TPM).
+# Đặt 4096 như trước khiến mỗi request "giữ chỗ" ~6.000 token -> chỉ chạy nổi ~1 request/phút rồi
+# 429, dù số lượt request còn dư 998/1000. Sinh 5 prompt cảnh thực tế chỉ tốn ~900 token đầu ra,
+# nên 1.500 vừa đủ chống cắt vừa không ăn hết hạn mức.
+GROQ_DEFAULT_MAX_TOKENS = 1500
+
+# Model -> ngày (YYYY-MM-DD) đã cạn quota, để khỏi gọi lại vô ích suốt phần còn lại của ngày.
+# Chỉ giữ trong RAM: mất khi restart app cũng không sao, cùng lắm tốn thêm 1 lượt gọi hỏng.
+_EXHAUSTED_TODAY: dict = {}
 
 # Mã lỗi HTTP đáng thử lại: 429 = vượt rate limit, còn 5xx là lỗi TẠM THỜI phía Google
 # (503 = model đang quá tải — hay gặp nhất ở free tier vào giờ cao điểm). Trước đây chỉ retry
@@ -67,6 +85,17 @@ def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 4, initia
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             last_err = e
+            # Đọc body 1 lần rồi gắn vào exception: body của HTTPError chỉ đọc được MỘT lần,
+            # caller cần nó để biết 429 này là hết-quota-ngày hay chỉ vượt-rate-limit-phút.
+            if not hasattr(e, "_body"):
+                try:
+                    e._body = e.read().decode("utf-8", "replace")
+                except Exception:
+                    e._body = ""
+            # Hết quota theo NGÀY thì retry hoàn toàn vô nghĩa (không hồi trong vài giây) —
+            # thoát ngay để nhường lượt cho model kế tiếp, đỡ bắt người dùng chờ.
+            if "PerDay" in e._body:
+                raise e
             # Lỗi vĩnh viễn (400 sai payload, 401/403 sai key, 404 sai model...) thì retry vô
             # nghĩa — thoát ngay để nhảy sang Groq cho nhanh.
             if e.code not in GEMINI_RETRYABLE_CODES:
@@ -93,7 +122,8 @@ def call_gemini_with_retry(url: str, payload: dict, max_retries: int = 4, initia
     raise RuntimeError("Không thể kết nối tới Gemini API")
 
 
-def call_groq(prompt: str, json_mode: bool = False, model: str = "openai/gpt-oss-120b") -> str:
+def call_groq(prompt: str, json_mode: bool = False, model: str = "openai/gpt-oss-120b",
+              max_tokens: int = GROQ_DEFAULT_MAX_TOKENS) -> str:
     """Gọi Groq (miễn phí ~14.400 request/ngày) bằng API OpenAI-compatible.
 
     Cần biến môi trường GROQ_API_KEY (đăng ký miễn phí tại console.groq.com).
@@ -114,10 +144,7 @@ def call_groq(prompt: str, json_mode: bool = False, model: str = "openai/gpt-oss
         "model": model,
         "messages": [{"role": "user", "content": full_prompt}],
         "temperature": 0.8,
-        # Không đặt max_tokens thì Groq dùng mặc định khá thấp -> JSON dài bị CẮT GIỮA DÒNG,
-        # json.loads ném "Unterminated string" và toàn bộ prompt cảnh rơi về mô tả chung chung.
-        # Sinh 5 prompt cảnh (mỗi cái ~110 từ) tốn khoảng 2.000+ ký tự JSON nên phải nới hẳn ra.
-        "max_tokens": 4096,
+        "max_tokens": max_tokens,
     }
     req = urllib.request.Request(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -139,24 +166,39 @@ def call_groq(prompt: str, json_mode: bool = False, model: str = "openai/gpt-oss
     return text
 
 
-def call_llm_with_fallback(prompt: str, json_mode: bool = False) -> str:
-    """Gọi Gemini trước; nếu lỗi (hết quota 20 request/ngày free tier, rate limit...) thì tự
-    động chuyển sang Groq để tính năng (sinh ý tưởng/kịch bản/prompt cảnh) không bị gián đoạn
-    cả ngày. Trả về text thô — caller tự json.loads nếu json_mode=True.
-    """
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if api_key:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={api_key}"
-            payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.8}}
-            if json_mode:
-                payload["generationConfig"]["response_mime_type"] = "application/json"
-            result = call_gemini_with_retry(url, payload, max_retries=2, initial_delay=1.0)
-            return result["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception as e:
-            logger.warning(f"  [LLM Fallback] Gemini lỗi ({e}), chuyển sang Groq...")
+def call_llm_with_fallback(prompt: str, json_mode: bool = False, max_tokens: int = GROQ_DEFAULT_MAX_TOKENS) -> str:
+    """Thử lần lượt từng model Gemini trong GEMINI_MODELS, hết sạch mới sang Groq.
 
-    return call_groq(prompt, json_mode=json_mode)
+    Free tier Gemini chỉ cho 20 request/ngày MỖI MODEL, nên khi model đầu báo hết quota thì model
+    kế tiếp vẫn còn nguyên hạn mức của nó — nhờ vậy không bị đứng hình cả ngày chỉ vì 1 model cạn.
+    Trả về text thô — caller tự json.loads nếu json_mode=True.
+    """
+    import time as _time
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    today = _time.strftime("%Y-%m-%d")
+    if api_key:
+        for model in GEMINI_MODELS:
+            # Model đã cạn quota NGÀY hôm nay thì bỏ qua thẳng, khỏi tốn thêm 1 vòng gọi mạng
+            # cho mỗi request tiếp theo trong ngày.
+            if _EXHAUSTED_TODAY.get(model) == today:
+                continue
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.8}}
+                if json_mode:
+                    payload["generationConfig"]["response_mime_type"] = "application/json"
+                result = call_gemini_with_retry(url, payload, max_retries=2, initial_delay=1.0)
+                return result["candidates"][0]["content"]["parts"][0]["text"]
+            except Exception as e:
+                if "PerDay" in getattr(e, "_body", ""):
+                    _EXHAUSTED_TODAY[model] = today
+                    logger.warning(f"  [LLM] Gemini '{model}' đã hết quota ngày, bỏ qua tới hết hôm nay.")
+                else:
+                    logger.warning(f"  [LLM] Gemini '{model}' lỗi ({e}), thử model kế tiếp...")
+
+    logger.warning("  [LLM] Không model Gemini nào dùng được, chuyển sang Groq.")
+    return call_groq(prompt, json_mode=json_mode, max_tokens=max_tokens)
 
 
 def split_script_into_sentences(script_text: str) -> list:
