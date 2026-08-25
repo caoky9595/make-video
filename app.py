@@ -335,18 +335,37 @@ def api_script_generate():
         Nhiệm vụ: Biến ý tưởng "{idea}" thành kịch bản video sự thật/tâm lý thuần giá trị, tối ưu để người xem LƯU lại và BẤM FOLLOW.
 
         Quy tắc Chế độ GIÁ TRỊ (XÂY FOLLOW — KHÔNG BÁN HÀNG):
-        1. **HOOK 2-3 GIÂY ĐẦU QUYẾT ĐỊNH TOÀN BỘ — BẮT BUỘC có "pattern interrupt"**: câu đầu tiên PHẢI nêu rõ 1 ĐIỀU ĐA SỐ ĐANG HIỂU SAI hoặc 1 SỰ THẬT GÂY BẤT NGỜ, KHÔNG được chỉ là 1 câu mô tả/tự sự thông thường.
-           - SAI (mô tả thường, không có hook, KHÔNG được viết kiểu này): "Mình thường quên tên người mới gặp."
-           - ĐÚNG (pattern interrupt, gây tò mò ngay lập tức): "99% người nghĩ quên tên là do trí nhớ kém — sự thật thì không phải vậy."
+        1. **3-5 TỪ ĐẦU TIÊN QUYẾT ĐỊNH TẤT CẢ — PHẢI vào thẳng nội dung, CẤM từ đệm mở bài.**
+           Người xem bỏ đi ở GIÂY THỨ 1, không phải ở cuối câu đầu. Mỗi từ đệm ở đầu là một phần
+           của giây quyết định bị vứt đi. Đo thực tế trên kênh này: 1 video mở bằng "Bạn có biết vì
+           sao..." — hết trọn 1 giây đầu mà chưa nói được thông tin gì, kết quả chỉ 3,1% người xem
+           hết (ngưỡng cần ~70%), phần lớn thoát đúng mốc 0:01.
+           CẤM TUYỆT ĐỐI mở đầu bằng các cụm sau (và mọi biến thể tương tự):
+           "Bạn có biết...", "Bạn có bao giờ...", "Bạn đã từng...", "Hôm nay mình sẽ...",
+           "Có một sự thật là...", "Bạn có thắc mắc...", "Chào các bạn...".
+           BẮT BUỘC: từ đầu tiên của kịch bản phải là 1 CON SỐ ("99%", "90%") hoặc đi thẳng vào
+           điều gây bất ngờ. Câu đầu nêu rõ 1 ĐIỀU ĐA SỐ ĐANG HIỂU SAI hoặc 1 SỰ THẬT GÂY BẤT NGỜ.
+           - SAI (từ đệm, phí mất giây vàng): "Bạn có biết vì sao mình thường quên tên người mới gặp không?"
+           - SAI (chỉ mô tả, không có bất ngờ): "Mình thường quên tên người mới gặp."
+           - ĐÚNG (con số đập vào ngay từ đầu): "99% người nghĩ quên tên là do trí nhớ kém — sự thật thì không phải vậy."
+           - ĐÚNG (vào thẳng điều ngược đời): "Quên tên người khác KHÔNG phải do trí nhớ kém đâu."
            Công thức gợi ý: "[Đa số/99%/Bạn] nghĩ/tin [điều X] — [nhưng/sự thật thì] [điều ngược lại]..." hoặc "[Hiện tượng Y] không phải do [nguyên nhân ai cũng nghĩ] mà do...".
-           TỰ KIỂM TRA trước khi viết tiếp: câu đầu có nêu đúng 1 điều sai phổ biến hoặc 1 sự thật bất ngờ không? Nếu câu đầu đọc giống ví dụ SAI ở trên (chỉ là phát biểu/tự sự) thì PHẢI viết lại đúng công thức trước khi sang thân bài.
+           TỰ KIỂM TRA trước khi viết tiếp: đọc to 5 TỪ ĐẦU TIÊN — chúng đã nói được điều gì bất ngờ
+           chưa, hay mới chỉ là lời rào đón? Nếu là rào đón thì XOÁ HẲN phần rào đón đó đi và bắt đầu
+           lại từ chính thông tin gây sốc.
         2. **KHÔNG bán hàng**, không nhắc sản phẩm/thương hiệu cụ thể, không CTA giỏ hàng.
         3. Sự thật/lý giải phải THỰC SỰ đúng, có căn cứ hợp lý (tâm lý học/khoa học hành vi/quan sát đời thường) — không bịa số liệu, không giật gân sai sự thật (tránh vi phạm chính sách misleading).
         4. Thân bài: giải thích rõ ràng, dễ hiểu, không lan man, không dùng thuật ngữ hàn lâm khó hiểu.
-        5. **Kết thúc bằng 1 câu chốt kéo tương tác**: ưu tiên kêu gọi LƯU video ("Lưu lại đọc lại khi cần nha") hoặc gợi mở series để FOLLOW ("Theo dõi để biết thêm 1 sự thật mỗi ngày", "Mai mình kể tiếp lý do vì sao...").
+        5. **Kết thúc BẮT BUỘC bằng 1 CÂU HỎI cho người xem trả lời trong phần bình luận.**
+           Bình luận là tín hiệu tương tác mạnh nhất để thuật toán đẩy video đi xa, mà câu chốt kiểu "Lưu lại nha" / "Theo dõi nha" KHÔNG tạo ra bình luận nào (đã đo thực tế: 2 video đầu tiên của kênh dùng kiểu chốt đó, kết quả 0 bình luận / 245 view).
+           Câu hỏi phải DỄ TRẢ LỜI TRONG 2-3 CHỮ — người xem lười gõ, hỏi khó là họ lướt luôn. Ưu tiên dạng CHỌN 1 TRONG 2 hoặc đếm số:
+           - ĐÚNG (dễ trả lời, gõ 1-2 chữ là xong): "Bạn thuộc kiểu nào — nhớ mặt hay nhớ tên?", "Bạn hay trì hoãn việc gì nhất, gõ 1 từ thôi?", "Bạn đã từng bị vậy chưa, có hay không?"
+           - SAI (hỏi rộng quá, không ai buồn trả lời): "Bạn nghĩ sao về điều này?", "Bạn có kinh nghiệm gì muốn chia sẻ không?"
+           - SAI (không phải câu hỏi, KHÔNG được dùng làm câu chốt): "Lưu lại đọc lại khi cần nha", "Theo dõi để biết thêm mỗi ngày".
+           Câu hỏi phải bám đúng nội dung sự thật vừa nói, không hỏi chung chung lạc đề.
         6. Độ dài lời thoại: NGẮN — mục tiêu ~{TARGET_LO}-{TARGET_HI} từ (video ra khoảng {TARGET_SEC} giây). GIỚI HẠN CỨNG: KHÔNG BAO GIỜ vượt quá {SCRIPT_WORD_CAP} từ — trước khi trả lời, tự đếm số từ bản nháp trong đầu; nếu vượt thì lược bớt câu giải thích rườm rà/liệt kê thừa cho tới khi dưới {SCRIPT_WORD_CAP} từ rồi mới trả lời. Ưu tiên NGẮN nhất có thể mà vẫn đủ ý — thuật toán TikTok 2026 cần ~70% người xem HẾT video mới đẩy tiếp, video càng ngắn càng dễ đạt.
 
-        Cấu trúc: Hook gây tò mò/bất ngờ -> Giải thích sự thật/lý do -> Câu chốt kêu gọi Lưu/Follow.
+        Cấu trúc: Hook gây tò mò/bất ngờ -> Giải thích sự thật/lý do -> CÂU HỎI dễ trả lời để kéo bình luận.
         Quy tắc: NGẮN, GẮT, THẤM, văn nói tự nhiên. CHỈ TRẢ VỀ lời thoại thuần, viết liền mạch tự nhiên như đang nói — KHÔNG chèn nhãn cấu trúc ("Hook:", "Thân bài:", "Kết thúc:"...), KHÔNG dùng markdown (**, __), không kèm mô tả cảnh quay hay timestamp.
         """
     elif mode == "digital_aff":

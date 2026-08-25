@@ -375,6 +375,13 @@ Nhiệm vụ:
 3. QUAN TRỌNG — ưu tiên hàng đầu: mô tả 1 KHOẢNH KHẮC ĐỜI THƯỜNG RELATABLE thể hiện đúng cảm xúc/tình huống của câu thoại đó (vd nằm trên giường nhìn trần nhà cho chủ đề mất ngủ, giật mình nhìn đồng hồ cho chủ đề trì hoãn, biểu cảm ngạc nhiên/xoà tay lên đầu cho 1 sự thật bất ngờ). Đây là yếu tố quan trọng nhất để người xem thấy "đúng là mình" — ưu tiên biểu cảm khuôn mặt và ngôn ngữ cơ thể rõ ràng hơn là hành động chung chung. Chuyển động NHẸ NHÀNG TỰ NHIÊN (subtle motion — thở dài, chớp mắt, quay đầu chậm) — KHÔNG chuyển động quá đà/kịch tính, vì phong cách anime slice-of-life hợp với tiết chế hơn là phô diễn.
 4. Một số câu thoại ở trên có thể đã GỘP nhiều câu gốc lại (1 cảnh phủ nhiều ý) vì mỗi cảnh = 1 lần tạo clip Flow ~{scene_duration_sec} giây, không thể diễn hết nhiều khoảnh khắc khác nhau trong 1 clip ngắn. Khi đó, CHỌN MỘT khoảnh khắc/cảm xúc đại diện, rõ nét nhất trong câu để mô tả — KHÔNG cố liệt kê hết mọi ý vào 1 prompt.
 5. Chỉ mô tả hình ảnh (chủ thể, biểu cảm, bối cảnh, góc máy, ánh sáng), KHÔNG chèn lời thoại hay chữ viết vào ảnh.
+6. RIÊNG CẢNH 1 — cảnh này quyết định người xem ở lại hay lướt qua, phải làm KHÁC hẳn các cảnh sau:
+   - Biểu cảm phải MẠNH và ĐÚNG TÔNG VẤN ĐỀ (bối rối, sững người, nhíu mày, mệt mỏi, ngượng ngùng).
+     TUYỆT ĐỐI KHÔNG để nhân vật mỉm cười thư thái ở cảnh 1 — đo thực tế: 1 video mở bằng cảnh cô ấy
+     cười tươi trong quán cà phê chỉ giữ được 3,1% người xem hết, vì mặt cười lệch hẳn với nội dung
+     đang nói về một vấn đề khó chịu, và cũng không có gì níu mắt người đang lướt.
+   - Ưu tiên CẬN MẶT (close-up / extreme close-up) để cảm xúc đập vào mắt ngay khung hình đầu.
+   - Nụ cười/thư giãn chỉ được dùng ở CẢNH CUỐI, khi nội dung đã chuyển sang phần giải pháp.
 
 TỰ KIỂM TRA trước khi trả về — với TỪNG prompt, bỏ phần mô tả nhân vật ra, phần còn lại có nêu rõ
 nhân vật ĐANG LÀM GÌ và MẶT MŨI/DÁNG NGƯỜI THẾ NÀO không? Nếu phần còn lại chỉ là mấy từ khoá địa
