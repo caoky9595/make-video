@@ -465,18 +465,57 @@ def _fit_frame_9_16(frame):
     return cv2.resize(frame, (VIDEO_WIDTH, VIDEO_HEIGHT), interpolation=cv2.INTER_AREA)
 
 
+# Biên độ zoom cho chuyển động camera thêm vào clip video. Cần vì clip sinh bằng Veo thường
+# gần như TĨNH: đo trên video thật thấy 99% pixel giống hệt nhau giữa 2 frame liên tiếp
+# (tblend difference -> pblack:99), mà mỗi cảnh lại dài 6-8 giây. Hình không đổi suốt 6-8s trên
+# TikTok bị đọc là "không có gì xảy ra" và người xem lướt luôn — khớp đúng số đo: phần lớn rời
+# ở mốc 0:02, chỉ 4,8% xem hết. Trước đây Ken Burns chỉ áp cho ẢNH TĨNH, clip video phát nguyên.
+VIDEO_KEN_BURNS_ZOOM = 0.14
+
+
+def _apply_ken_burns(frame, progress: float, pan_mode: str, zoom_range: float = VIDEO_KEN_BURNS_ZOOM):
+    """Crop dần theo thời gian để tạo cảm giác camera đang zoom/trôi, rồi resize về khung chuẩn.
+
+    progress: 0.0 -> 1.0 theo tiến độ của cảnh. pan_mode chọn kiểu chuyển động.
+    """
+    h, w = frame.shape[:2]
+    # zoom_out bắt đầu ở mức phóng to nhất rồi lùi ra; các kiểu còn lại phóng dần vào.
+    z = 1.0 + zoom_range * ((1.0 - progress) if pan_mode == "zoom_out" else progress)
+    crop_w = max(1, int(w / z))
+    crop_h = max(1, int(h / z))
+
+    # Dư ngang/dọc để trôi khung. left/right trôi dần sang 1 bên, còn lại giữ giữa.
+    max_x = w - crop_w
+    max_y = h - crop_h
+    if pan_mode == "left":
+        fx = 0.5 * (1.0 - progress)
+    elif pan_mode == "right":
+        fx = 0.5 + 0.5 * progress
+    else:
+        fx = 0.5
+    x0 = int(max_x * min(1.0, max(0.0, fx)))
+    y0 = int(max_y * 0.5)
+
+    cropped = frame[y0:y0 + crop_h, x0:x0 + crop_w]
+    return cv2.resize(cropped, (VIDEO_WIDTH, VIDEO_HEIGHT), interpolation=cv2.INTER_LINEAR)
+
+
 class _FormattedVideoSource:
-    """Bọc _Cv2VideoSource: tự crop/resize mỗi frame về đúng khung 1080x1920 và cho phép
-    chọn 1 đoạn con (start_offset, duration) của video gốc."""
+    """Bọc _Cv2VideoSource: crop/resize mỗi frame về khung 1080x1920, THÊM chuyển động camera
+    (zoom/pan chậm), và cho phép chọn 1 đoạn con (start_offset, duration) của video gốc."""
 
     def __init__(self, path, start_offset=0.0, duration=None):
         self._src = _Cv2VideoSource(path)
         self.start_offset = max(0.0, start_offset)
         self.duration = duration if duration is not None else max(0.0, self._src.duration - self.start_offset)
+        # Mỗi cảnh 1 kiểu chuyển động khác nhau để các cảnh liên tiếp không giống hệt nhau.
+        self.pan_mode = random.choice(["center", "left", "right", "zoom_out"])
 
     def get_frame(self, t):
         frame = self._src.get_frame(self.start_offset + t)
-        return _fit_frame_9_16(frame)
+        frame = _fit_frame_9_16(frame)
+        progress = 0.0 if self.duration <= 0 else min(1.0, max(0.0, t / self.duration))
+        return _apply_ken_burns(frame, progress, self.pan_mode)
 
     def close(self):
         self._src.close()
