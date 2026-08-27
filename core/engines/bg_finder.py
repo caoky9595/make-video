@@ -226,6 +226,16 @@ SCENE_EFFORT_PENALTY_SEC = 3  # mỗi cảnh thêm = 1 lần thao tác tay thậ
 # nhiều cảnh ngắn chỉ để tiết kiệm vài giây audio thừa (trần độ dài càng thấp, càng dễ xảy ra
 # nếu chỉ tối ưu lãng phí thuần tuý mà không tính công sức thao tác tay).
 
+# Độ dài mỗi cảnh MONG MUỐN và mức phạt cho từng giây vượt quá.
+# Vì sao cần phạt riêng cho cảnh dài: clip Veo gần như tĩnh (đo được 99% pixel giống hệt nhau
+# giữa 2 frame liền kề), nên cảnh 6-8 giây là 6-8 giây khán giả nhìn một hình gần như bất động —
+# đúng lý do video rời ở mốc 0:02 và chỉ 4,8% xem hết.
+# Chỉ hạ SCENE_EFFORT_PENALTY_SEC thì KHÔNG giải quyết được: với audio 14 giây, 2 cảnh x 8s
+# lãng phí 2 giây còn 4 cảnh x 4s cũng lãng phí 2 giây — bằng nhau, nên thuật toán luôn chọn
+# phương án ít cảnh. Phải tính thẳng "cảnh càng dài càng mất người xem" vào điểm.
+SCENE_TARGET_SEC = 4
+LONG_SCENE_PENALTY_PER_SEC = 2.5
+
 
 def estimate_scenes_and_duration(script_text: str, min_scenes: int = 1, max_scenes: int = 5) -> tuple:
     """Ước lượng (số cảnh, độ dài mỗi cảnh) hợp lý dựa trên ĐỘ DÀI AUDIO ước tính của kịch bản,
@@ -243,7 +253,8 @@ def estimate_scenes_and_duration(script_text: str, min_scenes: int = 1, max_scen
             if total < estimated_seconds:
                 continue  # không đủ che audio, loại
             waste = total - estimated_seconds
-            score = waste + n * SCENE_EFFORT_PENALTY_SEC
+            long_scene_penalty = n * max(0, d - SCENE_TARGET_SEC) * LONG_SCENE_PENALTY_PER_SEC
+            score = waste + n * SCENE_EFFORT_PENALTY_SEC + long_scene_penalty
             if best is None or score < best[0]:
                 best = (score, n, d)
     if best is None:
