@@ -326,9 +326,15 @@ def api_script_generate():
     SCRIPT_WORD_CAP = max(SCRIPT_WORD_CAP_MIN, min(SCRIPT_WORD_CAP_MAX, SCRIPT_WORD_CAP))
     # Khoảng "mục tiêu" phải co giãn theo trần, không được ghi cứng — nếu ghi cứng thì kéo
     # thanh trượt lên cao vẫn ra kịch bản ngắn y hệt, người dùng tưởng nút hỏng.
-    TARGET_LO = int(SCRIPT_WORD_CAP * 0.55)
-    TARGET_HI = int(SCRIPT_WORD_CAP * 0.78)
-    TARGET_SEC = round(SCRIPT_WORD_CAP * 5 / 20)
+    # Khoảng từ MỤC TIÊU, tính từ trần người dùng đặt. Trước đây lấy 0.55-0.78 lần trần nên
+    # kịch bản chỉ dùng ~2/3 thời lượng: đặt trần 65 từ (UI ghi "16s") nhưng AI viết 35-50 từ,
+    # video ra 8-9s — hụt ~40% so với cái người dùng chọn. Tệ hơn, câu "(video ra khoảng N giây)"
+    # trong prompt lại tính từ TRẦN chứ không phải từ khoảng mục tiêu, nên prompt tự mâu thuẫn:
+    # bảo AI viết 35-50 từ mà lại nói video sẽ dài 16 giây.
+    # Nay để 0.80-0.95 lần trần, và TARGET_SEC tính từ chính giữa khoảng mục tiêu.
+    TARGET_LO = int(SCRIPT_WORD_CAP * 0.80)
+    TARGET_HI = int(SCRIPT_WORD_CAP * 0.95)
+    TARGET_SEC = round((TARGET_LO + TARGET_HI) / 2 * 5 / 20)
 
     if mode == "viral":
         prompt = f"""Bạn là Chuyên gia Nội dung TikTok ngách Sự Thật Thú Vị & Tâm Lý Cuộc Sống, chuyên kéo VIEW và FOLLOW cho kênh mới (giai đoạn xây kênh, chưa bán hàng).

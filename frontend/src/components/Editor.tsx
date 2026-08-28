@@ -454,7 +454,9 @@ export const Editor: React.FC = () => {
                style={{ flex: '0 0 180px', cursor: 'pointer', accentColor: 'var(--primary)' }}
              />
              <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary)', minWidth: '116px' }}>
-               {wordCap} từ ≈ {Math.round(wordCap * 5 / 20)}s
+               {/* Ước lượng phải khớp TARGET_LO/TARGET_HI ở app.py (0.80-0.95 lần trần), không
+                   lấy thẳng trần — nếu không nhãn sẽ hứa dài hơn video thật khá nhiều. */}
+               {wordCap} từ ≈ {Math.round(wordCap * 0.875 * 5 / 20)}s
              </span>
              <span style={{ fontSize: '10px', color: wordCap <= 70 ? '#10b981' : '#f59e0b', lineHeight: 1.4, flex: 1, minWidth: '200px' }}>
                {wordCap <= 70
