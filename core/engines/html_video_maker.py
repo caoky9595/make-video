@@ -364,9 +364,13 @@ def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: fl
         draw = ImageDraw.Draw(grad)
         for y in range(h):
             t = y / h
-            # 0 → 1 → 0 shaped curve, darker near top/bottom
-            alpha = int(200 * (1.0 - (2 * t - 1) ** 4))
-            alpha = max(80, min(210, alpha))
+            # Dìm đậm nhất ở giữa (chỗ đặt chữ hook), nhạt dần ra hai đầu.
+            # Biên độ cũ 80-210/255 (giữa ảnh bị phủ 78% đen) dìm ảnh bìa xuống còn 46/255 trong
+            # khi clip gốc sáng 126/255 — tối gần gấp 3, mà đây lại đúng là ảnh hiện trên lưới hồ
+            # sơ và danh sách bài, nơi cần bắt mắt nhất. Chữ hook đã có viền đen 6px (stroke_width
+            # bên dưới) nên không cần nền tối dày tới vậy mới đọc được.
+            alpha = int(90 * (1.0 - (2 * t - 1) ** 4))
+            alpha = max(30, min(95, alpha))
             draw.line([(0, y), (w, y)], fill=(0, 0, 0, alpha))
         img = Image.alpha_composite(img, grad)
 
