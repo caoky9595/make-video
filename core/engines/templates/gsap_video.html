@@ -15,9 +15,13 @@
       position: absolute; width: 1080px; height: 1920px;
       object-fit: cover; z-index: 1;
     }
+    /* Lớp phủ tối để chữ nổi. Hạ từ 0.4 xuống 0.15: đo thực tế clip Veo gốc sáng 124-138/255
+       nhưng video xuất ra chỉ còn 81/255 — tối đi ~40%, tranh anime sáng đẹp bị dìm thành xám
+       xịt đúng lúc cần bắt mắt nhất trên feed. Phụ đề vẫn đọc rõ vì đã có viền đen 6px
+       (-webkit-text-stroke) và đổ bóng riêng cho từng style, không cần dìm cả khung hình. */
     #overlay {
       position: absolute; top: 0; left: 0; width: 1080px; height: 1920px;
-      background: rgba(0, 0, 0, 0.4); z-index: 2;
+      background: rgba(0, 0, 0, 0.15); z-index: 2;
     }
     #subtitles {
       position: absolute; width: 100%;
