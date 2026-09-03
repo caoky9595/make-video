@@ -897,6 +897,7 @@ def run_pipeline(
     audio_cfg: AudioConfig,
     sub_cfg: SubtitleConfig,
     output_file: str,
+    text_only: bool = False,
 ):
     """Tiến trình tạo video chạy nền."""
     update_job_status(job_id, "processing", 10, "Đang tạo giọng đọc...")
@@ -1004,7 +1005,8 @@ def run_pipeline(
             bgm_volume=audio_cfg.bgm_volume,
             image_dir=image_dir,
             uploaded_images=uploaded_images,
-            progress_callback=progress_cb
+            progress_callback=progress_cb,
+            text_only=text_only,
         )
 
         if job_id in cancelled_jobs:
@@ -1086,6 +1088,9 @@ def api_pipeline_start():
         overlay_opacity=0.35
     )
 
+    # Chế độ chữ động: nền gradient + chữ to, không cần clip Veo tạo tay.
+    text_only = bool(data.get("text_only"))
+
     job_id = str(uuid.uuid4())
     create_job(job_id, "queued", "Đang chờ...")
 
@@ -1099,6 +1104,7 @@ def api_pipeline_start():
         audio_cfg,
         sub_cfg,
         output_file,
+        text_only,
     )
 
     return jsonify({"success": True, "job_id": job_id, "message": "Pipeline đã bắt đầu chạy nền!"})

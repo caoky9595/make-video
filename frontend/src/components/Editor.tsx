@@ -15,6 +15,7 @@ export const Editor: React.FC = () => {
   const [selectedIdeaId, setSelectedIdeaId] = useState<number | null>(null);
   const [ideaFormat, setIdeaFormat] = useState('');
   const [scriptMode, setScriptMode] = useState(() => localStorage.getItem('editor_script_mode') || 'viral');
+  const [textOnly, setTextOnly] = useState(() => localStorage.getItem('editor_text_only') === '1');
   const [wordCap, setWordCap] = useState(() => Number(localStorage.getItem('editor_word_cap')) || 65);
   const [ideaBank, setIdeaBank] = useState<any[]>([]);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -607,6 +608,17 @@ export const Editor: React.FC = () => {
           <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981' }}>
             Bước 3 · Media Nền — thứ tự cảnh
           </h3>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer',
+                          padding: '10px 12px', borderRadius: '8px',
+                          background: textOnly ? 'rgba(168,85,247,0.14)' : 'rgba(255,255,255,0.04)',
+                          border: `1px solid ${textOnly ? 'rgba(168,85,247,0.5)' : 'var(--border-subtle)'}` }}>
+            <input type="checkbox" checked={textOnly} style={{ marginTop: '2px', cursor: 'pointer' }}
+              onChange={(e) => { setTextOnly(e.target.checked); localStorage.setItem('editor_text_only', e.target.checked ? '1' : '0'); }} />
+            <span style={{ fontSize: '11px', lineHeight: 1.5 }}>
+              <b>Chế độ chữ động</b> — nền gradient chuyển màu, chữ to giữa khung.
+              <span style={{ color: 'var(--text-muted)' }}> Không cần tạo clip Veo, bỏ qua toàn bộ Bước 2 và phần upload bên dưới. Render ~20 giây.</span>
+            </span>
+          </label>
           <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
             Upload clip vừa tạo ở Bước 2.
             Danh sách dưới đây hiển thị <b>đúng thứ tự cảnh sẽ được render</b> — dùng mũi tên ↑↓ để sửa
@@ -818,7 +830,8 @@ export const Editor: React.FC = () => {
                       style,
                       position,
                       music_mode,
-                      music_volume
+                      music_volume,
+                      text_only: textOnly
                     })
                   }).then(() => {
                     setPipelineStatus({ running: true, progress: 0, message: "Bắt đầu tiến trình..." });

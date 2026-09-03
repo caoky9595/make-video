@@ -147,9 +147,15 @@ def make_video_gsap(
     bgm_start_sec: float = 0.0,
     bgm_volume: float = 0.22,
     uploaded_images=None,
-    progress_callback=None
+    progress_callback=None,
+    text_only: bool = False
 ) -> str:
-    """Tạo video sử dụng HTML/GSAP và chụp màn hình bằng Playwright, tăng tốc bằng GPU/iGPU."""
+    """Tạo video sử dụng HTML/GSAP và chụp màn hình bằng Playwright, tăng tốc bằng GPU/iGPU.
+
+    text_only=True: bỏ hẳn clip nền, dùng nền gradient tự chuyển màu + chữ to giữa khung. Khi đó
+    KHÔNG cần tạo clip Veo bằng tay, và cũng bỏ luôn được bước dựng + encode video nền (nhanh hơn
+    đáng kể).
+    """
     logger.info("🚀 Bắt đầu render video bằng động cơ HTML/GSAP + Playwright...")
 
     # 1. Xác định độ dài audio
@@ -180,20 +186,21 @@ def make_video_gsap(
                 logger.info("  [GSAP Render] ⚠️ Trộn nhạc nền thất bại. Sử dụng audio gốc.")
                 temp_audio_path = audio_path
 
-    # 3. Chuẩn bị Visual Background Clip
-    visual_sources = _collect_visual_sources(image_dir=image_dir, uploaded_images=uploaded_images)
-
-    bg_clip = _prepare_bg_only_clip(duration, visual_sources, srt_path)
-    
-    # 4. Xuất background-only video thành temp file để Playwright tải
+    # 3-4. Chuẩn bị nền. Chế độ chữ động bỏ qua hoàn toàn khâu này (không clip, không encode).
     temp_bg_path = output_path.replace(".mp4", "_temp_bg.mp4")
-    logger.info(f"  [GSAP Render] Đang xuất background clip không chữ ra: {temp_bg_path}...")
-    
-    if progress_callback:
-        progress_callback(35, "Đang xử lý tài nguyên nền...")
-        
-    _write_lazy_clip_to_file(bg_clip, temp_bg_path, duration, FPS)
-    bg_clip.close()
+    if text_only:
+        logger.info("  [GSAP Render] Chế độ CHỮ ĐỘNG — bỏ qua clip nền, dùng gradient.")
+        temp_bg_path = None
+        if progress_callback:
+            progress_callback(45, "Chế độ chữ động — không cần clip nền.")
+    else:
+        visual_sources = _collect_visual_sources(image_dir=image_dir, uploaded_images=uploaded_images)
+        bg_clip = _prepare_bg_only_clip(duration, visual_sources, srt_path)
+        logger.info(f"  [GSAP Render] Đang xuất background clip không chữ ra: {temp_bg_path}...")
+        if progress_callback:
+            progress_callback(35, "Đang xử lý tài nguyên nền...")
+        _write_lazy_clip_to_file(bg_clip, temp_bg_path, duration, FPS)
+        bg_clip.close()
 
     # 5. Phân tích Subtitles thành list cấp từ cho GSAP
     subtitles = parse_subtitle_data(srt_path)
@@ -241,12 +248,17 @@ def make_video_gsap(
         file_url = f"file://{os.path.abspath(html_path)}"
         page.goto(file_url)
         
+        # Bật chế độ chữ động. setSubtitles bên dưới ghi đè body.className nhưng đã được sửa
+        # để giữ lại class 'text-only', nên gọi trước hay sau đều an toàn.
+        page.evaluate(f"window.setTextOnly({str(bool(text_only)).lower()})")
+
         # Áp dụng subtitles, style và vị trí phụ đề
         page.evaluate(f"window.setSubtitles({json.dumps(subtitles)}, {style}, '{position}')")
-        
-        # Áp dụng video nền
-        abs_bg_video = os.path.abspath(temp_bg_path)
-        page.evaluate(f"window.setBackgroundVideo('file://{abs_bg_video}')")
+
+        # Áp dụng video nền (chế độ chữ động không có clip nền)
+        if temp_bg_path:
+            abs_bg_video = os.path.abspath(temp_bg_path)
+            page.evaluate(f"window.setBackgroundVideo('file://{abs_bg_video}')")
         
         # Chờ video và DOM ổn định
         time.sleep(1.5)
@@ -288,7 +300,9 @@ def make_video_gsap(
     # 7. Tạo thumbnail — PHẢI làm TRƯỚC khi xoá temp_bg, và lấy frame từ temp_bg (nền sạch)
     # chứ không phải từ video thành phẩm: video thành phẩm đã nung phụ đề vào hình, lấy frame
     # từ đó sẽ ra ảnh bìa có 2 lớp chữ chồng nhau (phụ đề cũ + chữ hook mới) trông rất bẩn.
-    thumb_source = temp_bg_path if os.path.exists(temp_bg_path) else output_path
+    # Chế độ chữ động không có file nền tạm -> lấy frame từ chính video thành phẩm (nền gradient
+    # trơn nên không sợ chồng chữ như trường hợp nền là clip có phụ đề nung sẵn).
+    thumb_source = temp_bg_path if (temp_bg_path and os.path.exists(temp_bg_path)) else output_path
     thumb = _generate_thumbnail(thumb_source, srt_path, style, duration, output_path=output_path)
     if thumb:
         logger.info(f"  [Thumbnail] ✅ Đã lưu: {thumb}")

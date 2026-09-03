@@ -15,6 +15,41 @@
       position: absolute; width: 1080px; height: 1920px;
       object-fit: cover; z-index: 1;
     }
+
+    /* ============================================================
+       CHẾ ĐỘ CHỮ ĐỘNG (không cần clip nền)
+       Bật bằng cách thêm class `text-only` vào <body>. Dùng khi không muốn tạo clip Veo bằng
+       tay: nền là gradient tự chuyển màu chậm, chữ to đặt giữa màn hình làm chủ thể chính.
+       Gradient PHẢI động — nền tĩnh thì lại đúng vào lỗi cũ (hình đứng yên, người xem lướt).
+       ============================================================ */
+    /* Tông TỐI SÂU là cố ý: chữ trắng phải nổi bật trên nền. Thử tông sáng (#7597de) thì chữ
+       xám-xanh chìm hẳn vào nền, gần như không đọc được — các style chữ vốn thiết kế cho nền
+       video tối. */
+    #bg-gradient {
+      display: none;
+      position: absolute; top: 0; left: 0; width: 1080px; height: 1920px; z-index: 1;
+      background: linear-gradient(160deg, #1a1035, #3b2063, #16213e, #0f1729, #1a1035);
+      background-size: 100% 500%;
+    }
+    body.text-only #bg-gradient { display: block; }
+    body.text-only #background-video { display: none; }
+    body.text-only #overlay { background: rgba(0, 0, 0, 0.05); }
+    /* Chữ CHƯA đọc tới phải sáng hơn hẳn mặc định: nền gradient trơn không có chi tiết để
+       tương phản như khung hình video, để opacity 0.35 là chìm nghỉm.
+       KHÔNG dùng !important — GSAP animate opacity bằng inline style, mà CSS !important lại
+       thắng inline, dùng vào là chữ không bao giờ sáng lên được. Tăng độ ưu tiên bằng cách
+       thêm 1 cấp selector (.word-container) là đủ thắng `body.style-* .word`. */
+    body.text-only .word-container .word { opacity: 0.62; }
+    /* Chữ là chủ thể chính -> to hơn hẳn cỡ phụ đề và luôn nằm giữa khung */
+    body.text-only #subtitles {
+      top: 50% !important; bottom: auto !important;
+      transform: translateY(-50%) !important;
+      padding: 0 70px;
+    }
+    /* Chữ to 104px nhưng gap/margin vẫn là mức tính cho cỡ 80px -> các từ dính vào nhau
+       (đã gặp: "LỰCTHAY"). Nới cả hai theo cỡ chữ mới. */
+    body.text-only .segment { font-size: 104px !important; line-height: 1.18; gap: 26px; }
+    body.text-only .word-container .word { margin: 0 10px; }
     /* Lớp phủ tối để chữ nổi. Hạ từ 0.4 xuống 0.15: đo thực tế clip Veo gốc sáng 124-138/255
        nhưng video xuất ra chỉ còn 81/255 — tối đi ~40%, tranh anime sáng đẹp bị dìm thành xám
        xịt đúng lúc cần bắt mắt nhất trên feed. Phụ đề vẫn đọc rõ vì đã có viền đen 6px
@@ -126,6 +161,7 @@
 </head>
 <body class="style-mrbeast">
   <div id="container">
+    <div id="bg-gradient"></div>
     <video id="background-video" src="" muted loop></video>
     <div id="overlay"></div>
     <div id="subtitles">
@@ -155,7 +191,13 @@
 
     window.setSubtitles = function(subData, styleId, position) {
       subtitles = subData;
+      // Gán className ở đây GHI ĐÈ toàn bộ class của body, nên phải nhớ và gắn lại `text-only`
+      // — nếu không thì bật chế độ chữ động trước rồi gọi hàm này là mất sạch (nền gradient
+      // không hiện, chữ tụt về cỡ phụ đề). `!important` trong CSS không cứu được vì bản thân
+      // class đã bị xoá khỏi body.
+      const keepTextOnly = document.body.classList.contains('text-only');
       document.body.className = styleMap[styleId] || 'style-mrbeast';
+      if (keepTextOnly) document.body.classList.add('text-only');
 
       // Áp dụng vị trí phụ đề
       const subEl = document.getElementById("subtitles");
@@ -205,6 +247,14 @@
       if (tl) tl.kill();
       tl = gsap.timeline({ paused: true });
 
+      // Độ mờ của chữ SAU khi đã đọc xong. Chế độ chữ động cần sáng hơn hẳn: nền gradient trơn
+      // không có chi tiết để tương phản như khung hình video, để mức mặc định là chữ chìm nghỉm.
+      const isTextOnly = document.body.classList.contains('text-only');
+      const dim = (v) => isTextOnly ? Math.max(v, 0.62) : v;
+      // Chữ chế độ này to 104px, phóng thêm 15% là đè sang từ bên cạnh (transform không chiếm
+      // chỗ trong layout nên gap/margin không cứu được, đã thử). Giảm biên độ phóng còn ~40%.
+      const pop = (v) => isTextOnly ? 1 + (v - 1) * 0.4 : v;
+
       segments.forEach((seg, segIdx) => {
         const segStart = seg.words[0].start;
         const segEnd   = seg.words[seg.words.length - 1].end;
@@ -224,32 +274,47 @@
           const id = `#word-${gIdx}`;
 
           if (styleId === 1) { // MrBeast
-            tl.to(id, { opacity: 1, color: "#F7C204", scale: 1.15, duration: 0.15, ease: "back.out(2)" }, item.start);
-            tl.to(id, { opacity: 0.35, color: "#ffffff", scale: 1.0, duration: 0.15, ease: "power1.inOut" }, item.end);
+            tl.to(id, { opacity: 1, color: "#F7C204", scale: pop(1.15), duration: 0.15, ease: "back.out(2)" }, item.start);
+            tl.to(id, { opacity: dim(0.35), color: "#ffffff", scale: 1.0, duration: 0.15, ease: "power1.inOut" }, item.end);
           }
           else if (styleId === 2) { // Ali Abdaal
-            tl.to(id, { opacity: 1, color: "#06b6d4", scale: 1.08, duration: 0.12, ease: "power2.out" }, item.start);
-            tl.to(id, { opacity: 0.4, color: "#ffffff", scale: 1.0, duration: 0.12, ease: "power2.in" }, item.end);
+            tl.to(id, { opacity: 1, color: "#06b6d4", scale: pop(1.08), duration: 0.12, ease: "power2.out" }, item.start);
+            tl.to(id, { opacity: dim(0.4), color: "#ffffff", scale: 1.0, duration: 0.12, ease: "power2.in" }, item.end);
           }
           else if (styleId === 3) { // Marker Box
-            tl.to(id, { opacity: 1, color: "#000000", backgroundColor: "#22c55e", scale: 1.08, skewX: -6, duration: 0.1, ease: "power2.out" }, item.start);
-            tl.to(id, { opacity: 0.5, color: "#ffffff", backgroundColor: "transparent", scale: 1.0, skewX: 0, duration: 0.1, ease: "power2.in" }, item.end);
+            tl.to(id, { opacity: 1, color: "#000000", backgroundColor: "#22c55e", scale: pop(1.08), skewX: -6, duration: 0.1, ease: "power2.out" }, item.start);
+            tl.to(id, { opacity: dim(0.5), color: "#ffffff", backgroundColor: "transparent", scale: 1.0, skewX: 0, duration: 0.1, ease: "power2.in" }, item.end);
           }
           else if (styleId === 4) { // Typewriter
             tl.to(id, { opacity: 1, scale: 1, duration: 0.05 }, item.start);
-            tl.to(id, { opacity: 0.25, duration: 0.1 }, item.end);
+            tl.to(id, { opacity: dim(0.25), duration: 0.1 }, item.end);
           }
           else if (styleId === 5) { // Aesthetic
-            tl.to(id, { opacity: 1, color: "#fbbf24", scale: 1.06, duration: 0.18, ease: "sine.out" }, item.start);
-            tl.to(id, { opacity: 0.3, color: "#f3f4f6", scale: 1.0, duration: 0.18, ease: "sine.in" }, item.end);
+            tl.to(id, { opacity: 1, color: "#fbbf24", scale: pop(1.06), duration: 0.18, ease: "sine.out" }, item.start);
+            tl.to(id, { opacity: dim(0.3), color: "#f3f4f6", scale: 1.0, duration: 0.18, ease: "sine.in" }, item.end);
           }
         });
       });
     };
 
+    // Bật chế độ chữ động (không clip nền)
+    window.setTextOnly = function(on) {
+      document.body.classList.toggle("text-only", !!on);
+    };
+
     // Đồng bộ frame theo thời gian
     window.seekTo = function(seconds) {
       if (tl) tl.seek(seconds);
+
+      // Gradient nền phải TỰ CHUYỂN theo thời gian. Không dùng CSS animation được vì mỗi frame
+      // là 1 lần screenshot rời rạc (Playwright), CSS animation sẽ đứng im ở trạng thái đầu —
+      // phải tự tính vị trí gradient theo `seconds` thì mới ra chuyển động thật khi ghép frame.
+      const grad = document.getElementById("bg-gradient");
+      if (grad && document.body.classList.contains("text-only")) {
+        const pos = (seconds / 12.0) % 1;           // 1 vòng chuyển màu ~12 giây
+        grad.style.backgroundPosition = `50% ${(pos * 100).toFixed(2)}%`;
+      }
+
       const video = document.getElementById("background-video");
       if (video && video.readyState >= 2) {
         video.currentTime = seconds % video.duration;
