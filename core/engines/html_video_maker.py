@@ -399,6 +399,22 @@ def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: fl
             if m:
                 hook = m.group(1).strip().replace("\n", " ")
 
+        # Cắt còn vài từ đầu. Block SRT đầu tiên KHÔNG phải câu ngắn: với TikTok TTS mỗi block là
+        # trọn 1 câu dài tới 150 ký tự, nhét hết vào bìa thì phải thu nhỏ chữ để vừa 4 dòng, và
+        # ở cỡ ô lưới hồ sơ (~130px, tức thu nhỏ 8,3 lần) chữ chỉ còn ~5px — không đọc nổi.
+        # Cắt tại dấu câu gần nhất cho gọn ý, không có thì lấy tối đa MAX_COVER_WORDS từ.
+        MAX_COVER_WORDS = 7
+        if hook:
+            for sep in ("—", " - ", ",", ".", "?", "!"):
+                if sep in hook[:90]:
+                    head = hook.split(sep)[0].strip()
+                    if 2 <= len(head.split()) <= MAX_COVER_WORDS + 2:
+                        hook = head
+                        break
+            words_ = hook.split()
+            if len(words_) > MAX_COVER_WORDS:
+                hook = " ".join(words_[:MAX_COVER_WORDS])
+
         thumb_path = (output_path or video_path).rsplit(".", 1)[0] + "_cover.jpg"
 
         if not hook:
@@ -409,7 +425,7 @@ def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: fl
         from core.engines.video_maker import _get_font
 
         draw = ImageDraw.Draw(img)
-        MAX_LINES = 4
+        MAX_LINES = 3
         MAX_TEXT_W = w - 160  # chừa lề 80px mỗi bên
 
         def _wrap(text, font):
@@ -430,17 +446,22 @@ def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: fl
                 out.append(cur)
             return out
 
-        # Thu nhỏ dần cho tới khi hook VỪA ĐỦ trong MAX_LINES dòng. Cách cũ cắt cụt còn 3 dòng
-        # (`lines[:3]`) làm câu hook đứt giữa chừng, mất luôn vế chốt — hỏng cả ý câu.
-        font_size = 88
-        while font_size >= 52:
+        # Thu nhỏ dần cho tới khi hook VỪA ĐỦ trong MAX_LINES dòng, NHƯNG không nhỏ hơn
+        # MIN_COVER_FONT. Ảnh bìa hiện trên lưới hồ sơ ở cỡ ~130px, tức thu nhỏ 8,3 lần từ 1080px
+        # -> muốn đọc được (>=14px trên màn hình) thì chữ gốc phải >=116px. Cách cũ cho tụt tới
+        # 52px, ra chữ ~6px trên lưới: nhìn thấy có chữ nhưng không đọc được chữ gì.
+        MIN_COVER_FONT = 116
+        font_size = 150
+        while font_size >= MIN_COVER_FONT:
             font = _get_font(font_size)
             lines = _wrap(hook, font)
             if len(lines) <= MAX_LINES:
                 break
-            font_size -= 8
+            font_size -= 6
         else:
-            font = _get_font(52)
+            # Vẫn không vừa ở cỡ tối thiểu -> thà CẮT BỚT CHỮ còn hơn thu nhỏ tới mức không đọc được.
+            font_size = MIN_COVER_FONT
+            font = _get_font(font_size)
             lines = _wrap(hook, font)[:MAX_LINES]
 
         # Tránh dòng cuối trơ trọi 1 từ ngắn (vd "vị.") — nhìn rất hụt trên ảnh bìa. Hạ thêm vài
