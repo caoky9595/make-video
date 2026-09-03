@@ -948,8 +948,10 @@ def run_pipeline(
         if job_id in cancelled_jobs:
             raise Exception("Job cancelled by user")
 
+        # Chế độ chữ động dựng nền bằng gradient nên KHÔNG cần clip nào — bỏ qua kiểm tra này,
+        # nếu không thì bật chế độ đó mà Media Nền trống là bị chặn oan ngay từ đầu.
         studio_media = [f for f in os.listdir(image_dir) if f.lower().endswith(STUDIO_EXTENSIONS)]
-        if not studio_media:
+        if not studio_media and not text_only:
             raise FileNotFoundError(
                 "Chưa có ảnh/video nào trong Media Nền. Dùng trợ lý 'Hoạt hình Veo thủ công' để "
                 "sinh prompt, tạo clip bằng Google Flow rồi upload vào."
