@@ -315,50 +315,20 @@ def group_script_into_scenes(script_text: str, max_scenes: int = None) -> list:
     return [hook, *demo_groups, chot]
 
 
-# Nhân vật/mascot CỐ ĐỊNH xuyên suốt kênh — không để AI tự nghĩ lại mỗi video (khác trước đây),
-# vì đã kiểm chứng thực tế: nếu để AI tự chốt mô tả bằng chữ mỗi lần, Veo vẫn ra người khác nhau
-# giữa các cảnh dù mô tả gần giống hệt nhau. Cách đúng là dùng ảnh tham chiếu qua "Ingredients to
-# Video" của Veo 3.1 (upload 1 ảnh nhân vật cố định, tạo 1 lần từ đúng mô tả này) — mô tả chữ ở
-# đây chỉ là lớp hỗ trợ thêm cho AI viết prompt, KHÔNG thay thế được ảnh tham chiếu.
-MASCOT_DESCRIPTION = (
-    "Bống, a gentle young Vietnamese woman, fair skin, wavy dark hair half-up with a ribbon "
-    "clip, warm kind brown eyes, gold hoop earrings, layered gold necklace, lavender pleated "
-    "mini skirt, white top, white high-top sneakers, slender graceful figure, modern "
-    "slice-of-life anime illustration style, clean crisp linework, soft cel-shading, lavender "
-    "pastel palette"
+# PHONG CÁCH HÌNH CỐ ĐỊNH của kênh, ghép vào mọi prompt cảnh để các cảnh trông cùng một bộ phim.
+# Ngách bí ẩn KHÔNG dùng nhân vật mascot: nội dung là dựng lại hiện trường/sự việc, không phải một
+# người dẫn chuyện xuất hiện xuyên suốt. Đây cũng là lợi thế lớn — không ai có footage thật của vụ
+# việc hàng chục năm trước, nên hình dựng bằng AI là chuẩn mực của ngách, không bị coi là hàng giả
+# (khác hẳn cảnh đời thường, vốn lẽ ra phải quay thật nên hình AI lộ ngay).
+SCENE_STYLE = (
+    "cinematic documentary reconstruction, desaturated muted color grade, heavy atmosphere, "
+    "volumetric haze, film grain, dramatic low-key lighting, photorealistic, no text, no watermark"
 )
 
 FALLBACK_SCENE_DESCRIPTION = (
-    f"{MASCOT_DESCRIPTION}, relatable everyday moment, thoughtful expression, subtle natural "
-    "motion, warm soft lighting"
+    f"{SCENE_STYLE}, a dimly lit abandoned location, cold blue moonlight through broken windows, "
+    "slow creeping camera push-in, unsettling stillness"
 )
-
-
-# Đại từ/danh từ chỉ NAM -> nữ. Lưới an toàn CUỐI: dặn AI trong prompt là chưa đủ tin cậy (đo thực
-# tế vẫn lọt đại từ), mà 1 chữ "he" lọt vào là mâu thuẫn ngay với "a ... woman" trong mô tả nhân
-# vật, khiến Veo vẽ sai giới tính ở đúng cảnh đó. Sửa bằng code thì chắc chắn 100%.
-# Thay dài trước ngắn (himself trước him trước he) để không cắt nhầm giữa từ.
-_MASCULINE_FIXES = [
-    (r"\bhimself\b", "herself"),
-    (r"\bHimself\b", "Herself"),
-    (r"\bhis\b", "her"),
-    (r"\bHis\b", "Her"),
-    (r"\bhim\b", "her"),
-    (r"\bHim\b", "Her"),
-    (r"\bhe\b", "she"),
-    (r"\bHe\b", "She"),
-    (r"\bman\b", "woman"),
-    (r"\bmale\b", "female"),
-    (r"\bboy\b", "girl"),
-    (r"\bguy\b", "woman"),
-]
-
-
-def _force_feminine(text: str) -> str:
-    """Ép mọi đại từ/danh từ chỉ nam trong prompt cảnh về nữ, khớp với mascot Bống (nữ)."""
-    for pattern, repl in _MASCULINE_FIXES:
-        text = re.sub(pattern, repl, text)
-    return text
 
 
 def _generic_scene_fallback(sub_texts: list) -> list:
@@ -371,9 +341,10 @@ def generate_scene_prompts_with_gemini(script_text: str, sub_texts: list, scene_
     """Sinh prompt tiếng Anh nhất quán cho từng cảnh — dùng cho trợ lý "Hoạt hình Veo thủ công"
     (người dùng copy từng prompt dán vào Google Flow).
 
-    Ghép mascot CỐ ĐỊNH (MASCOT_DESCRIPTION, không đổi giữa các video) vào hành động/bối cảnh
-    riêng của từng câu do Gemini/Groq viết — để các cảnh trông như "cùng một bộ phim" thay vì rời
-    rạc. Trả về list cùng độ dài với sub_texts (fallback: mô tả cảnh chung chung nếu cả 2 đều lỗi).
+    Ghép phong cách hình CỐ ĐỊNH (SCENE_STYLE) vào khung cảnh riêng của từng câu do Gemini/Groq
+    dựng — để các cảnh trông như "cùng một bộ phim" thay vì rời rạc. Ngách bí ẩn không dùng nhân
+    vật dẫn chuyện, mỗi cảnh là một hiện trường/khung cảnh của sự việc.
+    Trả về list cùng độ dài với sub_texts (fallback: mô tả cảnh chung chung nếu cả 2 đều lỗi).
     """
     import json
 
@@ -383,10 +354,8 @@ def generate_scene_prompts_with_gemini(script_text: str, sub_texts: list, scene_
         return _generic_scene_fallback(sub_texts)
 
     numbered_subs = "\n".join(f"{i+1}. {t}" for i, t in enumerate(sub_texts))
-    prompt = f"""Bạn là đạo diễn hình ảnh chuyên viết prompt cho Google Flow/Veo, ngách Sự Thật Thú Vị & Tâm Lý Cuộc Sống.
-Viết prompt đúng chuẩn khuyến nghị của Veo — PHẢI có đủ các thành phần: Chủ thể, Hành động/biểu cảm, Bối cảnh,
-Phong cách hình ảnh, Góc máy/cỡ cảnh, Ánh sáng/tông màu. Thiếu góc máy hoặc ánh sáng sẽ ra cảnh phẳng,
-chung chung — đây là lỗi cần tránh.
+    prompt = f"""Bạn là đạo diễn hình ảnh viết prompt cho Google Flow/Veo, kênh KỂ CHUYỆN BÍ ẨN & VỤ ÁN CÓ THẬT.
+Nhiệm vụ: với mỗi câu thoại, viết 1 prompt tiếng Anh dựng lại KHUNG CẢNH minh hoạ cho câu đó.
 
 Kịch bản đầy đủ: {script_text[:1200]}
 
@@ -394,62 +363,41 @@ Danh sách {len(sub_texts)} câu thoại theo thứ tự thời gian:
 {numbered_subs}
 
 Nhiệm vụ:
-1. Nhân vật/mascot của kênh CỐ ĐỊNH, dùng NGUYÊN VĂN không đổi cho mọi video (đây là "chị Bống" —
-   người kể chuyện xuyên suốt kênh, có ảnh tham chiếu riêng để giữ nhất quán qua Veo "Ingredients to
-   Video"): "{MASCOT_DESCRIPTION}". Bối cảnh/setting (phòng ngủ, văn phòng, công viên...) được phép
-   ĐỔI theo từng cảnh cho hợp nội dung câu thoại đó — chỉ mô tả nhân vật ở trên là cố định, không
-   được diễn giải lại hay đổi chi tiết ngoại hình.
-2. Với MỖI câu thoại, viết 1 prompt tiếng Anh gồm 2 phần ghép liền:
-   (a) NGUYÊN VĂN mô tả nhân vật ở bước 1 (không đổi 1 chữ), rồi
-   (b) phần CẢNH RIÊNG dài 40-60 TỪ — đếm riêng, KHÔNG tính số từ của phần (a).
-   Phần (b) BẮT BUỘC có đủ 5 thứ, thiếu bất kỳ thứ nào là prompt hỏng:
-   - HÀNH ĐỘNG CỤ THỂ đang diễn ra (vd "slumped over a desk pushing a laptop away", "scrolling a phone
-     under the blanket", "freezing mid-reach for a coffee cup") — KHÔNG được chỉ ghi địa điểm suông.
-   - BIỂU CẢM MẶT + NGÔN NGỮ CƠ THỂ (vd "jaw tight, eyes darting away", "shoulders sagging, faint
-     defeated smile", "eyebrows lifting in slow realisation").
-   - CHI TIẾT BỐI CẢNH gợi đúng nội dung câu thoại (vd "half-finished to-do list and 3 empty mugs",
-     "clock reading 2AM", "sticky notes peeling off a monitor") — chi tiết nhỏ kể được câu chuyện.
-   - GÓC MÁY/CỠ CẢNH (vd "extreme close-up on face", "top-down shot", "medium shot at eye level").
-   - ÁNH SÁNG/TÔNG MÀU đúng cảm xúc (vd "cold blue nighttime glow" cho lo âu, "warm golden light" cho
-     nhẹ nhõm).
-   CÁCH VIẾT: ưu tiên CỤM PHÂN TỪ nối bằng dấu phẩy ("standing...", "clutching...", "brow furrowing...")
-   vì vừa giàu hình ảnh vừa không cần chủ ngữ. Chỗ nào bắt buộc phải có đại từ cho câu tự nhiên
-   ("on her back", "over her shoulder") thì CHỈ ĐƯỢC dùng đại từ NỮ: she/her/hers. TUYỆT ĐỐI KHÔNG
-   dùng he/his/him — nhân vật là NỮ, lỡ viết "he" là mâu thuẫn ngay với "a ... woman" ở phần (a),
-   Veo sẽ vẽ sai giới tính. Đừng vì né đại từ mà viết cụt lủn — nội dung giàu quan trọng hơn.
-   Ví dụ ĐÚNG (giàu nội dung, không đại từ — viết theo kiểu này):
-     "...lavender pastel palette, slumped in a desk chair at 2AM, pushing the laptop away with one
-     fingertip, jaw tight and eyes avoiding the screen, a half-written document and three empty mugs
-     beside a glowing phone, extreme close-up on face at eye level, cold blue monitor glow against
-     deep shadows."
-   Ví dụ SAI 1 — chỉ liệt kê từ khoá suông, KHÔNG có hành động/biểu cảm (đây là lỗi HAY GẶP NHẤT,
-   phải tránh): "...lavender pastel palette, home desk night, extreme close-up, cold blue soft glow"
-   Ví dụ SAI 2 — dùng đại từ: "...lavender pastel palette, she is lying in bed and her eyes stare..."
-3. QUAN TRỌNG — ưu tiên hàng đầu: mô tả 1 KHOẢNH KHẮC ĐỜI THƯỜNG RELATABLE thể hiện đúng cảm xúc/tình huống của câu thoại đó (vd nằm trên giường nhìn trần nhà cho chủ đề mất ngủ, giật mình nhìn đồng hồ cho chủ đề trì hoãn, biểu cảm ngạc nhiên/xoà tay lên đầu cho 1 sự thật bất ngờ). Đây là yếu tố quan trọng nhất để người xem thấy "đúng là mình" — ưu tiên biểu cảm khuôn mặt và ngôn ngữ cơ thể rõ ràng hơn là hành động chung chung. Chuyển động NHẸ NHÀNG TỰ NHIÊN (subtle motion — thở dài, chớp mắt, quay đầu chậm) — KHÔNG chuyển động quá đà/kịch tính, vì phong cách anime slice-of-life hợp với tiết chế hơn là phô diễn.
-4. Một số câu thoại ở trên có thể đã GỘP nhiều câu gốc lại (1 cảnh phủ nhiều ý) vì mỗi cảnh = 1 lần tạo clip Flow ~{scene_duration_sec} giây, không thể diễn hết nhiều khoảnh khắc khác nhau trong 1 clip ngắn. Khi đó, CHỌN MỘT khoảnh khắc/cảm xúc đại diện, rõ nét nhất trong câu để mô tả — KHÔNG cố liệt kê hết mọi ý vào 1 prompt.
-5. Chỉ mô tả hình ảnh (chủ thể, biểu cảm, bối cảnh, góc máy, ánh sáng), KHÔNG chèn lời thoại hay chữ viết vào ảnh.
-6. RIÊNG CẢNH 1 — cảnh này quyết định người xem ở lại hay lướt qua, phải làm KHÁC hẳn các cảnh sau:
-   - Biểu cảm phải MẠNH và ĐÚNG TÔNG VẤN ĐỀ (bối rối, sững người, nhíu mày, mệt mỏi, ngượng ngùng).
-     TUYỆT ĐỐI KHÔNG để nhân vật mỉm cười thư thái ở cảnh 1 — đo thực tế: 1 video mở bằng cảnh cô ấy
-     cười tươi trong quán cà phê chỉ giữ được 3,1% người xem hết, vì mặt cười lệch hẳn với nội dung
-     đang nói về một vấn đề khó chịu, và cũng không có gì níu mắt người đang lướt.
-   - Ưu tiên CẬN MẶT (close-up / extreme close-up) để cảm xúc đập vào mắt ngay khung hình đầu.
-   - Nụ cười/thư giãn chỉ được dùng ở CẢNH CUỐI, khi nội dung đã chuyển sang phần giải pháp.
+1. Mỗi prompt LUÔN bắt đầu bằng đúng nguyên văn phong cách hình cố định của kênh:
+   "{SCENE_STYLE}"
+   Giữ nguyên không đổi để mọi cảnh trông cùng một bộ phim.
+2. Sau phần phong cách, viết 40-60 TỪ (đếm riêng) dựng lại khung cảnh của câu thoại đó, đủ 4 thứ:
+   - BỐI CẢNH CỤ THỂ đúng nội dung câu (khu rừng tuyết đêm, khoang tàu bỏ hoang, hầm mộ đá,
+     đồn cảnh sát thập niên 70...). Có chi tiết vật thể kể được chuyện: lều rách, giày bỏ lại,
+     đèn pin lăn trên tuyết, hồ sơ ố vàng.
+   - CHUYỂN ĐỘNG CAMERA chậm, tạo bất an: "slow dolly push-in", "drifting aerial descent",
+     "handheld unsteady approach". BẮT BUỘC có, vì cảnh tĩnh làm người xem lướt.
+   - GÓC MÁY/CỠ CẢNH: "extreme wide establishing shot", "low angle", "overhead top-down".
+   - ÁNH SÁNG: "cold moonlight", "single flashlight beam in darkness", "grey overcast dawn".
+   Viết bằng CỤM PHÂN TỪ nối dấu phẩy, không viết thành câu có chủ ngữ.
+3. **KHÔNG có người dẫn chuyện xuất hiện.** Nếu cảnh cần người thì chỉ là bóng dáng mờ, người ở
+   xa, hoặc chỉ thấy bàn tay/dấu chân — KHÔNG cận mặt ai, KHÔNG nhân vật cố định. Ngách này kể về
+   SỰ VIỆC, không phải về một người dẫn.
+4. **KHÔNG máu me, tử thi, thương tích, bạo lực.** Gợi sự bí ẩn bằng cái VẮNG MẶT và cái BỎ LẠI
+   (lều trống, bàn ăn còn nguyên, dấu chân dừng giữa chừng), không bằng cảnh ghê rợn — vừa bị hạn
+   chế phân phối, vừa kém hiệu quả hơn.
+5. Mỗi cảnh phải KHÁC nhau rõ rệt về bối cảnh và góc máy, không lặp lại.
+6. Chỉ mô tả hình, KHÔNG chèn chữ hay lời thoại vào ảnh.
+7. Một số câu thoại có thể đã gộp nhiều ý vì mỗi cảnh là 1 clip Flow ~{scene_duration_sec} giây —
+   khi đó chọn MỘT hình ảnh đại diện rõ nét nhất, không nhồi hết mọi ý vào 1 prompt.
 
-TỰ KIỂM TRA trước khi trả về — với TỪNG prompt, bỏ phần mô tả nhân vật ra, phần còn lại có nêu rõ
-nhân vật ĐANG LÀM GÌ và MẶT MŨI/DÁNG NGƯỜI THẾ NÀO không? Nếu phần còn lại chỉ là mấy từ khoá địa
-điểm + góc máy + ánh sáng thì prompt đó BỊ RỖNG, phải viết lại cho đủ hành động và biểu cảm.
-Mỗi cảnh phải có hành động/bối cảnh KHÁC nhau rõ rệt — không được 3 cảnh cùng một kiểu ngồi ở bàn.
+TỰ KIỂM TRA: bỏ phần phong cách ra, phần còn lại có tả được một KHUNG CẢNH CỤ THỂ với chuyển động
+camera không? Nếu chỉ còn mấy từ khoá địa điểm suông thì prompt đó rỗng, phải viết lại.
 
-CHỈ TRẢ VỀ JSON array đúng {len(sub_texts)} phần tử (mỗi phần tử = mô tả nhân vật nguyên văn + 40-60
-từ cảnh riêng giàu hành động/biểu cảm), theo đúng thứ tự: ["prompt cảnh 1", "prompt cảnh 2", ...]
+CHỈ TRẢ VỀ JSON array đúng {len(sub_texts)} phần tử (mỗi phần tử = phong cách nguyên văn + 40-60 từ
+dựng cảnh), theo đúng thứ tự: ["prompt cảnh 1", "prompt cảnh 2", ...]
 """
 
     try:
         content = call_llm_with_fallback(prompt, json_mode=True)
         prompts = json.loads(content)
         if isinstance(prompts, list) and len(prompts) == len(sub_texts):
-            return [_force_feminine(str(x)) for x in prompts]
+            return [str(x) for x in prompts]
         logger.warning(f"  [Scene Prompts] AI trả về {len(prompts) if isinstance(prompts, list) else 'không phải list'} phần tử, cần {len(sub_texts)}. Dùng fallback.")
         return _generic_scene_fallback(sub_texts)
     except json.JSONDecodeError as e:

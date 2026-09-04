@@ -36,11 +36,11 @@ MIN_DURATION_SEC = 15
 # Mỗi mood thử lần lượt nhiều từ khoá: kho CC0 khá mỏng, từ khoá hẹp thường ra 0 kết quả.
 # Key = đúng mood-query trong music_finder.MOOD_KEYWORDS (dùng luôn làm tên file để khớp).
 MOOD_QUERIES = {
-    "calm_contemplative_background_instrumental": ["lofi chill beat", "lofi", "chill instrumental"],
-    "calm_soft_ambient_reflective": ["ambient calm pad", "ambient soft", "calm atmosphere"],
-    "playful_quirky_lighthearted": ["ukulele happy", "playful", "quirky", "cheerful loop"],
-    "tense_anxious_suspenseful": ["tense suspense drone", "dark drone", "suspense"],
-    "upbeat_motivational_inspiring": ["upbeat loop", "uplifting", "energetic instrumental"],
+    "dark_mysterious_cinematic": ["dark ambient drone", "mysterious cinematic", "dark atmosphere"],
+    "tense_anxious_suspenseful": ["tense suspense drone", "suspense", "tension build"],
+    "eerie_unsettling_horror_ambient": ["horror ambient", "eerie drone", "creepy atmosphere"],
+    "epic_dramatic_orchestral": ["epic cinematic", "dramatic orchestral", "epic drums"],
+    "cosmic_space_ambient": ["space ambient", "cosmic pad", "deep space"],
     "melancholic_emotional_piano": ["sad emotional piano", "melancholy piano", "slow piano"],
 }
 

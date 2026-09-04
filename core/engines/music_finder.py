@@ -16,34 +16,34 @@ from core.utils.logger_config import logger
 # được chọn theo ngách Sự Thật Thú Vị & Tâm Lý Cuộc Sống (thay vì bộ từ khoá chung chung cũ hầu
 # như không bao giờ khớp với nội dung ngách này).
 MOOD_KEYWORDS = {
-    "calm soft ambient reflective": [
-        r"ngủ", r"mất ngủ", r"thư giãn", r"bình yên", r"tĩnh lặng", r"chill", r"lofi", r"nhẹ nhàng",
-    ],
-    "melancholic emotional piano": [
-        # KHÔNG dùng riêng chữ "nhớ": ngách này đầy từ "trí nhớ"/"ghi nhớ" (chuyện nhận thức,
-        # trung tính) — khớp bừa sẽ gán nhạc piano buồn cho video mẹo cải thiện trí nhớ.
-        r"buồn", r"cô đơn", r"chia tay", r"mất mát", r"tổn thương", r"khóc",
-        r"nhớ nhung", r"thương nhớ", r"tiếc nuối",
+    "dark mysterious cinematic": [
+        r"bí ẩn", r"mất tích", r"biến mất", r"không dấu vết", r"chưa có lời giải",
+        r"khó hiểu", r"kỳ lạ", r"bí hiểm", r"không ai biết",
     ],
     "tense anxious suspenseful": [
-        r"lo âu", r"lo lắng", r"căng thẳng", r"sợ", r"áp lực", r"stress", r"hoảng", r"ám ảnh",
+        r"vụ án", r"điều tra", r"hiện trường", r"nghi phạm", r"cảnh sát", r"truy tìm",
+        r"nguy hiểm", r"đe doạ", r"săn lùng",
     ],
-    "upbeat motivational inspiring": [
-        r"động lực", r"cố gắng", r"thành công", r"tự tin", r"vượt qua", r"mạnh mẽ", r"thay đổi",
+    "eerie unsettling horror ambient": [
+        r"kinh dị", r"rùng rợn", r"ma quái", r"ám ảnh", r"tâm linh", r"hồn ma",
+        r"quỷ", r"nghĩa địa", r"ghê rợn",
     ],
-    "playful quirky lighthearted": [
-        r"hài", r"vui", r"funny", r"buồn cười", r"thú vị", r"bất ngờ",
+    "epic dramatic orchestral": [
+        r"cổ đại", r"kim tự tháp", r"nền văn minh", r"khảo cổ", r"di tích", r"đế chế",
+        r"lịch sử", r"hàng nghìn năm",
     ],
-    "dark mysterious cinematic": [
-        # BỎ "sự thật": tên ngách là "Sự Thật Thú Vị" nên gần như kịch bản nào cũng chứa cụm này,
-        # để lại thì đa số video bị gán nhạc kiểu kinh dị — sai hẳn tông mẹo tâm lý đời thường.
-        r"kinh dị", r"bí ẩn", r"rùng rợn", r"ghê rợn", r"đáng sợ",
+    "cosmic space ambient": [
+        r"vũ trụ", r"thiên hà", r"hành tinh", r"ngoài trái đất", r"ufo", r"người ngoài hành tinh",
+        r"sao hoả", r"hố đen",
+    ],
+    "melancholic emotional piano": [
+        r"bi kịch", r"tang thương", r"mất mát", r"không bao giờ trở về", r"tưởng niệm",
     ],
 }
 
 # Mood mặc định khi kịch bản không rơi rõ vào nhóm nào — trung tính, hợp giọng kể chuyện đời
 # thường/tâm lý (không quá kịch tính như "cinematic" chung chung trước đây).
-DEFAULT_MOOD_QUERY = "calm contemplative background instrumental"
+DEFAULT_MOOD_QUERY = "dark mysterious suspense ambient"
 
 
 def _extract_music_query(script_text: str, custom_query: str = "") -> str:

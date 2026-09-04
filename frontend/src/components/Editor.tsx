@@ -16,7 +16,7 @@ export const Editor: React.FC = () => {
   const [ideaFormat, setIdeaFormat] = useState('');
   const [scriptMode, setScriptMode] = useState(() => localStorage.getItem('editor_script_mode') || 'viral');
   const [textOnly, setTextOnly] = useState(() => localStorage.getItem('editor_text_only') === '1');
-  const [wordCap, setWordCap] = useState(() => Number(localStorage.getItem('editor_word_cap')) || 65);
+  const [wordCap, setWordCap] = useState(() => Number(localStorage.getItem('editor_word_cap')) || 110);
   const [ideaBank, setIdeaBank] = useState<any[]>([]);
   const [isSuggesting, setIsSuggesting] = useState(false);
 
@@ -450,7 +450,7 @@ export const Editor: React.FC = () => {
                Độ dài kịch bản:
              </label>
              <input
-               type="range" min={25} max={120} step={5} value={wordCap}
+               type="range" min={40} max={200} step={10} value={wordCap}
                onChange={(e) => { const v = Number(e.target.value); setWordCap(v); localStorage.setItem('editor_word_cap', String(v)); }}
                style={{ flex: '0 0 180px', cursor: 'pointer', accentColor: 'var(--primary)' }}
              />

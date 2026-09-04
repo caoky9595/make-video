@@ -298,9 +298,12 @@ def api_script_save():
 # Hạ từ 90 xuống 65 (22/08/2026): thuật toán TikTok 2026 đòi ~70% người xem HẾT video mới đẩy
 # tiếp (2024 chỉ ~50%). Video 21s phải giữ chân 14,5s, còn 14s chỉ cần 10s — dễ hơn hẳn.
 # Người dùng chỉnh được trong UI (gửi kèm `word_cap`), đây chỉ là giá trị mặc định.
-DEFAULT_SCRIPT_WORD_CAP = 65
+# Kể chuyện cần dài hơn nêu-sự-thật: phải dựng bối cảnh, thả chi tiết lạ tăng dần, rồi mới bỏ ngỏ.
+# 110 từ ~ 27 giây. Ngách bí ẩn giữ chân được lâu vì có vòng lặp mở, nên video dài không bất lợi
+# như format cũ (nêu đáp án ngay đầu, xem xong tiêu đề là hết lý do ở lại).
+DEFAULT_SCRIPT_WORD_CAP = 110
 SCRIPT_WORD_CAP_MIN = 25
-SCRIPT_WORD_CAP_MAX = 120
+SCRIPT_WORD_CAP_MAX = 200
 
 
 @app.route("/api/script/generate", methods=["POST"])
@@ -310,7 +313,7 @@ def api_script_generate():
     idea = data.get("idea", "").strip()
     idea_id = data.get("idea_id")
     if not idea:
-        idea = "Một sự thật tâm lý/cuộc sống bất ngờ mà ít người biết (hành vi, thói quen, cảm xúc, mối quan hệ) (Random)"
+        idea = "Một vụ mất tích hoặc hiện tượng có thật đến nay vẫn chưa có lời giải (Random)"
 
     if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GROQ_API_KEY"):
         return jsonify({"error": "Chưa cấu hình GEMINI_API_KEY hoặc GROQ_API_KEY trong file .env"}), 400
@@ -337,45 +340,38 @@ def api_script_generate():
     TARGET_SEC = round((TARGET_LO + TARGET_HI) / 2 * 5 / 20)
 
     if mode == "viral":
-        prompt = f"""Bạn là Chuyên gia Nội dung TikTok ngách Sự Thật Thú Vị & Tâm Lý Cuộc Sống, chuyên kéo VIEW và FOLLOW cho kênh mới (giai đoạn xây kênh, chưa bán hàng).
-        Nhiệm vụ: Biến ý tưởng "{idea}" thành kịch bản video sự thật/tâm lý thuần giá trị, tối ưu để người xem LƯU lại và BẤM FOLLOW.
+        prompt = f"""Bạn là người kể chuyện TikTok ngách Bí Ẩn & Vụ Án Có Thật, kéo VIEW và FOLLOW cho kênh mới.
+        Nhiệm vụ: Biến ý tưởng "{idea}" thành kịch bản KỂ CHUYỆN, tối ưu để người xem phải xem HẾT mới biết kết.
 
-        Quy tắc Chế độ GIÁ TRỊ (XÂY FOLLOW — KHÔNG BÁN HÀNG):
-        1. **MỞ ĐẦU BẰNG MỘT TÌNH HUỐNG CỤ THỂ NGƯỜI XEM TỪNG TRẢI — KHÔNG mở bằng khẳng định trừu tượng.**
-           Đo thực tế trên kênh này (8 video): người xem rời ở GIÂY 0:01. Đã thử đổi hình (anime ->
-           nền chữ động) và đổi giọng, thời gian xem KHÔNG nhúc nhích (vẫn 2,8-4,2s) -> nút thắt
-           nằm ở NỘI DUNG câu đầu, không phải hình hay tiếng.
-           Vì sao khuôn cũ hỏng: 6/8 video mở bằng khẳng định về "não bộ" ("90% trì hoãn không phải
-           vì lười", "Não nhớ lời chê lâu hơn lời khen"). Trong 1 giây, người đang lướt KHÔNG xử lý
-           nổi một khẳng định trừu tượng về cơ chế vô hình — nhưng nhận ra NGAY một cảnh mình từng
-           sống. Phải làm họ nghĩ "sao nó biết" trước khi kịp vuốt tiếp.
-           BẮT BUỘC: câu đầu tiên là 1 KHOẢNH KHẮC CỤ THỂ, quay được thành hình, có chi tiết đời
-           thường (đồ vật, con số, hành động). KHÔNG nhắc chữ "não" ở câu đầu. Câu THỨ HAI mới lật
-           ngược và giải thích cơ chế.
-           - SAI (khẳng định trừu tượng, đúng khuôn đang hỏng): "90% trì hoãn không phải vì lười đâu."
-           - SAI (từ đệm, phí giây vàng): "Bạn có biết vì sao mình hay trì hoãn không?"
-           - ĐÚNG (cảnh cụ thể, thấy được): "Mở laptop định làm việc. Mười phút sau đang lau bàn."
-           - ĐÚNG (cảnh cụ thể có con số): "Sếp khen chín câu, chê một câu. Tối đó bạn nghĩ về câu nào?"
-           - ĐÚNG (cảnh cụ thể): "Đi vào bếp, đứng đực ra, quên mất mình định lấy gì."
-           TỰ KIỂM TRA: câu đầu có HÌNH DUNG ĐƯỢC thành một cảnh không? Nếu nó là lời phát biểu về
-           "não"/"tâm lý"/"đa số người" thì SAI — viết lại thành cảnh cụ thể rồi mới sang cơ chế.
-           TRÁNH LẶP: mỗi kịch bản phải mở bằng một loại tình huống khác nhau (nơi chốn, đồ vật,
-           thời điểm khác nhau) — kênh đang bị 6/8 video giống hệt khuôn nên người xem lướt qua
-           vì tưởng đã xem rồi.
-        2. **KHÔNG bán hàng**, không nhắc sản phẩm/thương hiệu cụ thể, không CTA giỏ hàng.
-        3. Sự thật/lý giải phải THỰC SỰ đúng, có căn cứ hợp lý (tâm lý học/khoa học hành vi/quan sát đời thường) — không bịa số liệu, không giật gân sai sự thật (tránh vi phạm chính sách misleading).
-        4. Thân bài: giải thích rõ ràng, dễ hiểu, không lan man, không dùng thuật ngữ hàn lâm khó hiểu.
-        5. **Kết thúc BẮT BUỘC bằng 1 CÂU HỎI cho người xem trả lời trong phần bình luận.**
-           Bình luận là tín hiệu tương tác mạnh nhất để thuật toán đẩy video đi xa, mà câu chốt kiểu "Lưu lại nha" / "Theo dõi nha" KHÔNG tạo ra bình luận nào (đã đo thực tế: 2 video đầu tiên của kênh dùng kiểu chốt đó, kết quả 0 bình luận / 245 view).
-           Câu hỏi phải DỄ TRẢ LỜI TRONG 2-3 CHỮ — người xem lười gõ, hỏi khó là họ lướt luôn. Ưu tiên dạng CHỌN 1 TRONG 2 hoặc đếm số:
-           - ĐÚNG (dễ trả lời, gõ 1-2 chữ là xong): "Bạn thuộc kiểu nào — nhớ mặt hay nhớ tên?", "Bạn hay trì hoãn việc gì nhất, gõ 1 từ thôi?", "Bạn đã từng bị vậy chưa, có hay không?"
-           - SAI (hỏi rộng quá, không ai buồn trả lời): "Bạn nghĩ sao về điều này?", "Bạn có kinh nghiệm gì muốn chia sẻ không?"
-           - SAI (không phải câu hỏi, KHÔNG được dùng làm câu chốt): "Lưu lại đọc lại khi cần nha", "Theo dõi để biết thêm mỗi ngày".
-           Câu hỏi phải bám đúng nội dung sự thật vừa nói, không hỏi chung chung lạc đề.
-        6. Độ dài lời thoại: NGẮN — mục tiêu ~{TARGET_LO}-{TARGET_HI} từ (video ra khoảng {TARGET_SEC} giây). GIỚI HẠN CỨNG: KHÔNG BAO GIỜ vượt quá {SCRIPT_WORD_CAP} từ — trước khi trả lời, tự đếm số từ bản nháp trong đầu; nếu vượt thì lược bớt câu giải thích rườm rà/liệt kê thừa cho tới khi dưới {SCRIPT_WORD_CAP} từ rồi mới trả lời. Ưu tiên NGẮN nhất có thể mà vẫn đủ ý — thuật toán TikTok 2026 cần ~70% người xem HẾT video mới đẩy tiếp, video càng ngắn càng dễ đạt.
+        Quy tắc Chế độ KỂ CHUYỆN BÍ ẨN:
+        1. **TUYỆT ĐỐI KHÔNG tiết lộ đáp án ở đầu — đây là quy tắc quan trọng nhất.**
+           Kênh trước của người dùng thất bại vì đúng lỗi này: mở bằng "90% trì hoãn không phải vì
+           lười" tức nói luôn điều thú vị nhất ngay câu đầu, xem xong tiêu đề là hết lý do ở lại
+           -> người xem rời ở giây 0:01, chỉ 4,8% xem hết.
+           Kể chuyện phải TẠO CÂU HỎI rồi giữ nó mở, không phải đưa kết luận rồi giải thích.
+        2. **Câu đầu: thả người xem vào GIỮA sự việc, có mốc thời gian/địa điểm/con số cụ thể.**
+           - ĐÚNG: "Năm 1959, chín người leo núi bỏ chạy khỏi lều giữa đêm âm 30 độ. Lều bị rạch từ BÊN TRONG."
+           - ĐÚNG: "Con tàu chở 42 thuyền viên cập cảng đúng lịch. Trên boong không còn một ai."
+           - SAI (nêu kết luận trước): "Vụ mất tích này thực ra là do khí độc rò rỉ."
+           - SAI (rào đón): "Hôm nay mình kể các bạn nghe một vụ án bí ẩn."
+        3. **Thân bài: mỗi câu thêm MỘT chi tiết lạ, tăng dần độ khó hiểu.** Chi tiết phải cụ thể
+           (con số, vật chứng, lời khai) — không nói chung chung. Càng kể càng khó hiểu, không được
+           giải thích sớm.
+        4. **Kết: chốt bằng giả thuyết BỎ NGỎ, không khép lại.** Nói rõ đến nay vẫn chưa có lời
+           giải, hoặc nêu 2 giả thuyết trái ngược. KHÔNG kết luận dứt khoát.
+        5. **Sự việc phải CÓ THẬT, kể đúng sự thật.** Không bịa vụ án, không bịa số liệu, không
+           thêm chi tiết rùng rợn không có thật. Nếu chỉ là truyền thuyết/tin đồn thì phải nói rõ
+           là chưa kiểm chứng. Bịa chuyện có thật là vi phạm chính sách tin sai lệch.
+        6. **Tránh cảnh máu me, tử thi, bạo lực chi tiết** — vừa bị hạn chế phân phối, vừa không
+           cần thiết. Sự bí ẩn mới giữ người xem, không phải sự ghê rợn.
+        7. Độ dài lời thoại: mục tiêu ~{TARGET_LO}-{TARGET_HI} từ (video khoảng {TARGET_SEC} giây).
+           GIỚI HẠN CỨNG: không vượt quá {SCRIPT_WORD_CAP} từ.
+        8. **Kết thúc bằng CÂU HỎI cho người xem trả lời**, dạng chọn 1 trong 2 hoặc đoán giả thuyết:
+           "Bạn nghiêng về giả thuyết nào — tai nạn hay có người thứ ba?", "Bạn nghĩ họ còn sống không?"
 
-        Cấu trúc: Hook gây tò mò/bất ngờ -> Giải thích sự thật/lý do -> CÂU HỎI dễ trả lời để kéo bình luận.
-        Quy tắc: NGẮN, GẮT, THẤM, văn nói tự nhiên. CHỈ TRẢ VỀ lời thoại thuần, viết liền mạch tự nhiên như đang nói — KHÔNG chèn nhãn cấu trúc ("Hook:", "Thân bài:", "Kết thúc:"...), KHÔNG dùng markdown (**, __), không kèm mô tả cảnh quay hay timestamp.
+        Cấu trúc: Thả vào giữa sự việc -> chi tiết lạ tăng dần -> bỏ ngỏ + câu hỏi.
+        Quy tắc: văn nói tự nhiên, kể như đang thì thầm với bạn. CHỈ TRẢ VỀ lời thoại thuần —
+        KHÔNG nhãn cấu trúc, KHÔNG markdown, KHÔNG mô tả cảnh quay hay timestamp.
         """
     elif mode == "digital_aff":
         prompt = f"""Bạn là Chuyên gia Affiliate sản phẩm số (app/dịch vụ) ngách Tâm Lý & Phát Triển Bản Thân, quảng bá qua link ngoài (AccessTrade...), KHÔNG qua giỏ hàng TikTok Shop.
@@ -490,17 +486,25 @@ def api_ideas_generate():
             if format_hint else
             "5. Chọn định dạng phù hợp cho từng ý tưởng: listicle đếm số, trước/sau nhận thức, myth-busting, đếm ngược giữ chân, hoặc khoảnh khắc đồng cảm."
         )
-        prompt = f"""Bạn là chuyên gia nội dung TikTok ngách Sự Thật Thú Vị & Tâm Lý Cuộc Sống tại Việt Nam, đang giúp một kênh MỚI xây follower (giai đoạn 1, chưa bán hàng).
-        Hãy đề xuất 5 ý tưởng video sự thật/tâm lý ngắn (15-22s) cho kênh faceless (hoạt hình AI + giọng đọc AI), tối ưu để kéo VIEW và FOLLOW.
+        prompt = f"""Bạn là người tìm đề tài cho kênh TikTok ngách Bí Ẩn & Vụ Án Có Thật tại Việt Nam (kênh faceless, hình dựng bằng AI + giọng đọc AI).
+        Hãy đề xuất 5 ý tưởng video KỂ CHUYỆN, mỗi ý tưởng là một sự việc CÓ THẬT còn bỏ ngỏ.
         Yêu cầu:
-        1. TẤT CẢ là sự thật/lý giải thuần giá trị, KHÔNG bán hàng, không nhắc sản phẩm cụ thể.
-        2. Mỗi ý tưởng phải đúng, có căn cứ hợp lý (tâm lý học/khoa học hành vi/quan sát đời thường), gây bất ngờ, dễ khiến người xem muốn LƯU lại.
-        3. **BẮT BUỘC mỗi ý tưởng có "pattern interrupt" ngay từ đầu** — nêu rõ 1 điều đa số hiểu sai hoặc 1 sự thật gây bất ngờ, KHÔNG được là câu mô tả/tự sự thông thường.
-           - SAI (chỉ mô tả, không hook, KHÔNG được viết kiểu này): "Mình thường quên tên người mới gặp"
-           - ĐÚNG (pattern interrupt): "99% người nghĩ quên tên là do trí nhớ kém -> sự thật thì không phải vậy"
-        4. Định dạng: "[Tâm lý/Hành vi/Mối quan hệ] Hook... -> nội dung lý giải ngắn".
+        1. Sự việc phải CÓ THẬT và kiểm chứng được (vụ mất tích, hiện tượng chưa lời giải, khảo cổ
+           kỳ lạ, tàu/máy bay biến mất, công trình cổ khó lý giải...). KHÔNG bịa vụ án.
+           Nếu là truyền thuyết/tin đồn chưa kiểm chứng thì phải ghi rõ trong ý tưởng.
+        2. **Mỗi ý tưởng phải có một CHI TIẾT LẠ cụ thể làm điểm neo** — con số, vật chứng, tình
+           tiết khó hiểu. Đây là thứ tạo tò mò, không phải chủ đề chung chung.
+           - SAI (chung chung): "Vụ mất tích bí ẩn ở Nga"
+           - ĐÚNG (có chi tiết neo): "9 người leo núi Dyatlov bỏ chạy khỏi lều giữa đêm âm 30 độ, lều bị rạch từ BÊN TRONG"
+        3. Ưu tiên sự việc **chưa có kết luận chính thức** — còn bỏ ngỏ mới kể được thành chuyện.
+           Sự việc đã có đáp án rõ ràng thì hết bí ẩn.
+        4. TRÁNH đề tài máu me/tử thi/bạo lực chi tiết — bị hạn chế phân phối. Ưu tiên cái KHÓ HIỂU
+           hơn cái GHÊ RỢN.
+        5. Đa dạng: đừng cho cả 5 cùng một loại (đừng 5 vụ mất tích liền). Trộn giữa mất tích,
+           khảo cổ, hiện tượng tự nhiên, công trình cổ, sự kiện lịch sử khó lý giải.
+        6. Định dạng mỗi ý tưởng: "[Loại] Bối cảnh + chi tiết lạ cụ thể".
         {format_instruction}
-        6. CHỈ TRẢ VỀ JSON array: ["ý tưởng 1", "ý tưởng 2", ...]
+        7. CHỈ TRẢ VỀ JSON array: ["ý tưởng 1", "ý tưởng 2", ...]
         {avoid_block}"""
 
     from core.engines.bg_finder import call_llm_with_fallback
