@@ -5,7 +5,7 @@ export const Editor: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState(0);
   const [pipelineStatus, setPipelineStatus] = useState<any>(null);
-  const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem('editor_voice') || 'tiktok_nu_1');
+  const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem('editor_voice') || 'namminh');
   const [bgFiles, setBgFiles] = useState<string[]>([]);
   const [musicFiles, setMusicFiles] = useState<string[]>([]);
   const bgInputRef = useRef<HTMLInputElement>(null);
@@ -16,7 +16,7 @@ export const Editor: React.FC = () => {
   const [ideaFormat, setIdeaFormat] = useState('');
   const [scriptMode, setScriptMode] = useState(() => localStorage.getItem('editor_script_mode') || 'viral');
   const [textOnly, setTextOnly] = useState(() => localStorage.getItem('editor_text_only') === '1');
-  const [wordCap, setWordCap] = useState(() => Number(localStorage.getItem('editor_word_cap')) || 110);
+  const [wordCap, setWordCap] = useState(() => Number(localStorage.getItem('editor_word_cap')) || 75);
   const [ideaBank, setIdeaBank] = useState<any[]>([]);
   const [isSuggesting, setIsSuggesting] = useState(false);
 
@@ -299,17 +299,23 @@ export const Editor: React.FC = () => {
               localStorage.setItem('editor_voice', e.target.value);
             }}
           >
-            <option value="tiktok_nu_1">⭐ TikTok - Giọng Nữ Review (hợp viral)</option>
-            <option value="tiktok_nu_2">⭐ TikTok - Giọng Nữ Trẻ</option>
-            <option value="tiktok_nam_1">⭐ TikTok - Giọng Nam Bí Ẩn</option>
-            <option value="tiktok_nam_2">⭐ TikTok - Giọng Nam Đọc Nhanh</option>
-            <option value="banmai">Ban Mai (FPT) - Nữ Bắc trẻ trung</option>
-            <option value="thuminh">Thu Minh (FPT) - Nữ Bắc dịu dàng</option>
-            <option value="leminh">Lê Minh (FPT) - Nam Bắc trầm ấm</option>
-            <option value="myan">Mỹ An (FPT) - Nữ Trung Bộ</option>
-            <option value="giahuy">Gia Huy (FPT) - Nam Trung Bộ</option>
-            <option value="lannhi">Lan Nhi (FPT) - Nữ Nam Bộ</option>
-            <option value="linhsan">Linh San (FPT) - Nữ Nam mềm mại</option>
+            <optgroup label="Hợp ngách bí ẩn — trầm, chỉnh được tốc độ">
+              <option value="namminh">⭐ Nam Minh (Edge) — 144Hz, trầm, miễn phí không giới hạn</option>
+              <option value="leminh">Lê Minh (FPT) — 122Hz, trầm nhất (giới hạn 100k ký tự/tháng)</option>
+              <option value="giahuy">Gia Huy (FPT) — Nam Trung Bộ</option>
+            </optgroup>
+            <optgroup label="Giọng TikTok — KHÔNG chỉnh được tốc độ">
+              <option value="tiktok_nam_1">TikTok Nam — 160Hz, cần TIKTOK_SESSION_ID</option>
+              <option value="tiktok_nu_1">TikTok Nữ — 262Hz, hợp nội dung nhẹ nhàng hơn</option>
+            </optgroup>
+            <optgroup label="Giọng nữ khác">
+              <option value="hoaimy">Hoài My (Edge) — Nữ</option>
+              <option value="banmai">Ban Mai (FPT) — Nữ Bắc trẻ trung</option>
+              <option value="thuminh">Thu Minh (FPT) — Nữ Bắc dịu dàng</option>
+              <option value="lannhi">Lan Nhi (FPT) — Nữ Nam Bộ</option>
+              <option value="linhsan">Linh San (FPT) — Nữ Nam mềm mại</option>
+              <option value="myan">Mỹ An (FPT) — Nữ Trung Bộ</option>
+            </optgroup>
           </select>
           {selectedVoice.startsWith('tiktok') && (
             <p style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.4 }}>
@@ -322,12 +328,12 @@ export const Editor: React.FC = () => {
             Tốc độ đọc
           </h3>
           <select id="rate_select" className="input-field" style={{ cursor: 'pointer' }}
-                  defaultValue={localStorage.getItem('editor_rate') || "+50%"}
+                  defaultValue={localStorage.getItem('editor_rate') || "+0%"}
                   onChange={(e) => localStorage.setItem('editor_rate', e.target.value)}>
-            <option value="+0%">Bình thường (0%)</option>
-            <option value="+10%">Nhanh nhẹ (+10%)</option>
+            <option value="-10%">Chậm, trang trọng (-10%) — hợp kể chuyện</option>
+            <option value="+0%">Bình thường (0%) — mặc định ngách bí ẩn</option>
             <option value="+20%">Nhanh (+20%)</option>
-            <option value="+50%">Nhanh (50% - Mặc định)</option>
+            <option value="+50%">Rất nhanh (+50%)</option>
           </select>
 
           <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--primary)', marginTop: '0.5rem' }}>
@@ -457,7 +463,7 @@ export const Editor: React.FC = () => {
              <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary)', minWidth: '116px' }}>
                {/* Ước lượng phải khớp TARGET_LO/TARGET_HI ở app.py (0.80-0.95 lần trần), không
                    lấy thẳng trần — nếu không nhãn sẽ hứa dài hơn video thật khá nhiều. */}
-               {wordCap} từ ≈ {Math.round(wordCap * 0.875 * 5 / 20)}s
+               {wordCap} từ ≈ {Math.round(wordCap * 0.875 * 5 / 12)}s
              </span>
              <span style={{ fontSize: '10px', color: wordCap <= 70 ? '#10b981' : '#f59e0b', lineHeight: 1.4, flex: 1, minWidth: '200px' }}>
                {wordCap <= 70

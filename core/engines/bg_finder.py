@@ -216,9 +216,13 @@ def split_script_into_sentences(script_text: str) -> list:
 # Vì đây là hội thoại (không có dropdown), người dùng phải NÓI rõ mốc này trong chat trước khi
 # bấm phê duyệt.
 FLOW_DURATION_OPTIONS = [4, 6, 8]
-CHARS_PER_SECOND_ESTIMATE = 20  # tốc độ đọc TTS tiếng Việt ước lượng (đo thực tế edge-tts
-# +50% ra ~24 ký tự/giây; lấy thấp hơn 1 chút cho an toàn vì TikTok TTS có chèn khoảng lặng
-# giữa các câu, đọc chậm hơn edge-tts).
+CHARS_PER_SECOND_ESTIMATE = 12  # đo THỰC TẾ trên kịch bản 236 ký tự với giọng mặc định mới
+# (namminh / Edge / rate +0%): 19,5 giây -> 12,1 ký tự/giây. Mốc cũ 20 ký tự/giây lấy từ giọng
+# TikTok nữ đọc nhanh (+50%), sai lệch lớn với giọng kể chuyện chậm -> app ước lượng THIẾU thời
+# lượng audio nên chia THIẾU cảnh, clip hết trước khi audio hết.
+# Đổi giọng hoặc đổi tốc độ thì phải đo lại con số này. Tham chiếu đã đo:
+#   namminh  +0%  -> 12,1 ký tự/giây      namminh -10% -> 10,9
+#   tiktok_nam_1  -> 16,7 (không chỉnh được tốc độ)
 
 
 SCENE_EFFORT_PENALTY_SEC = 3  # mỗi cảnh thêm = 1 lần thao tác tay thật trên Flow (dán prompt,
@@ -233,7 +237,10 @@ SCENE_EFFORT_PENALTY_SEC = 3  # mỗi cảnh thêm = 1 lần thao tác tay thậ
 # Chỉ hạ SCENE_EFFORT_PENALTY_SEC thì KHÔNG giải quyết được: với audio 14 giây, 2 cảnh x 8s
 # lãng phí 2 giây còn 4 cảnh x 4s cũng lãng phí 2 giây — bằng nhau, nên thuật toán luôn chọn
 # phương án ít cảnh. Phải tính thẳng "cảnh càng dài càng mất người xem" vào điểm.
-SCENE_TARGET_SEC = 4
+# Ngách kể chuyện giữ chân bằng CÂU CHUYỆN chứ không bằng nhịp cắt cảnh, nên cảnh dài hơn được.
+# Mốc 4s trước đây đặt cho format cũ (hình gần như tĩnh, không có gì giữ người xem ngoài chuyển
+# động). Nâng lên 6s để giảm số clip phải tạo tay: video 30s còn 5 clip thay vì 8.
+SCENE_TARGET_SEC = 6
 LONG_SCENE_PENALTY_PER_SEC = 2.5
 
 

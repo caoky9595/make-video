@@ -299,9 +299,9 @@ def api_script_save():
 # tiếp (2024 chỉ ~50%). Video 21s phải giữ chân 14,5s, còn 14s chỉ cần 10s — dễ hơn hẳn.
 # Người dùng chỉnh được trong UI (gửi kèm `word_cap`), đây chỉ là giá trị mặc định.
 # Kể chuyện cần dài hơn nêu-sự-thật: phải dựng bối cảnh, thả chi tiết lạ tăng dần, rồi mới bỏ ngỏ.
-# 110 từ ~ 27 giây. Ngách bí ẩn giữ chân được lâu vì có vòng lặp mở, nên video dài không bất lợi
+# Đo lại với giọng mặc định mới (12 ký tự/giây): 75 từ ~ 31 giây. Ngách bí ẩn giữ chân được lâu vì có vòng lặp mở, nên video dài không bất lợi
 # như format cũ (nêu đáp án ngay đầu, xem xong tiêu đề là hết lý do ở lại).
-DEFAULT_SCRIPT_WORD_CAP = 110
+DEFAULT_SCRIPT_WORD_CAP = 75
 SCRIPT_WORD_CAP_MIN = 25
 SCRIPT_WORD_CAP_MAX = 200
 
