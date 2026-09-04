@@ -643,6 +643,16 @@ async def _generate_tiktok_api(text: str, output_audio: str, output_srt: str, ra
 # MAIN ENTRY POINT
 # ============================================================
 
+def _edge_fallback_for(voice: str) -> str:
+    """Chọn giọng Edge thay thế khi FPT/TikTok hỏng, KHỚP GIỚI TÍNH với giọng người dùng chọn.
+
+    Đổi giới tính giữa chừng nghe rất lệch, nhất là kênh kể chuyện có tông giọng cố định.
+    """
+    v = voice.lower()
+    male = v in ("leminh", "giahuy") or v.startswith("tiktok_nam")
+    return "namminh" if male else "hoaimy"
+
+
 async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+50%", voice: str = "hoaimy", raw_text_input: str = None):
     """
     Đọc file kịch bản hoặc nhận text trực tiếp, sinh ra audio MP3 và subtitle SRT.
@@ -685,10 +695,24 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
     if engine == "edge":
         voice_id = EDGE_VOICES.get(voice.lower(), voice)
         await _generate_edge_tts(text, output_audio, output_srt, rate, voice_id)
-    elif engine == "tiktok":
-        await _generate_tiktok_api(text, output_audio, output_srt, rate, voice)
-    elif engine == "fpt":
-        _generate_fpt_tts(text, output_audio, output_srt, rate, voice)
+    else:
+        # FPT và TikTok đều có thể hỏng vì lý do NGOÀI tầm kiểm soát và chỉ là tạm thời:
+        # FPT free tier chặn theo tần suất (HTTP 429 "rate limit exceeded for 'free'") và có hạn
+        # mức 100k ký tự/tháng; TikTok thì cần TIKTOK_SESSION_ID vốn hay hết hạn.
+        # Trước đây lỗi này ném thẳng lên và GIẾT CẢ JOB RENDER — mất toàn bộ video chỉ vì một
+        # lỗi tạm thời, dù Edge đang rảnh, miễn phí và không giới hạn. Nay tự lùi về Edge.
+        try:
+            if engine == "tiktok":
+                await _generate_tiktok_api(text, output_audio, output_srt, rate, voice)
+            else:
+                _generate_fpt_tts(text, output_audio, output_srt, rate, voice)
+        except Exception as e:
+            fallback = _edge_fallback_for(voice)
+            logger.warning(
+                f"  [TTS] Giọng '{voice}' ({engine}) lỗi: {str(e)[:120]} "
+                f"-> tự chuyển sang Edge '{fallback}' để không hỏng cả video."
+            )
+            await _generate_edge_tts(text, output_audio, output_srt, rate, EDGE_VOICES[fallback])
 
     logger.info(f"  [TTS] ✅ Audio saved: {output_audio}")
     logger.info(f"  [TTS] ✅ Subtitles saved: {output_srt}")
