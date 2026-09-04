@@ -942,7 +942,12 @@ def run_pipeline(
         audio_path = os.path.join(job_temp, "audio.mp3")
         srt_path = os.path.join(job_temp, "subtitles.srt")
 
-        run_tts(script_path, audio_path, srt_path, rate=audio_cfg.rate, voice=audio_cfg.voice)
+        used_voice = run_tts(script_path, audio_path, srt_path, rate=audio_cfg.rate, voice=audio_cfg.voice)
+        # Báo rõ nếu giọng bị đổi so với lựa chọn — nếu im lặng thì người dùng tưởng 2 giọng
+        # khác nhau lại nghe y hệt (đã gặp: FPT 429 nên leminh âm thầm thành namminh).
+        if used_voice and used_voice != audio_cfg.voice:
+            update_job_status(job_id, "processing", 28,
+                              f"⚠️ Giọng '{audio_cfg.voice}' không dùng được, đã thay bằng '{used_voice}'")
         update_job_status(job_id, "processing", 30, "Đang chuẩn bị video nền...")
 
         if job_id in cancelled_jobs:

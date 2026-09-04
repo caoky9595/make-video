@@ -692,6 +692,7 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
     # Chọn engine dựa trên tên giọng
     engine = get_engine(voice)
 
+    actual_voice = voice   # giọng THỰC SỰ dùng — khác `voice` nếu phải lùi về Edge
     if engine == "edge":
         voice_id = EDGE_VOICES.get(voice.lower(), voice)
         await _generate_edge_tts(text, output_audio, output_srt, rate, voice_id)
@@ -713,16 +714,23 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
                 f"-> tự chuyển sang Edge '{fallback}' để không hỏng cả video."
             )
             await _generate_edge_tts(text, output_audio, output_srt, rate, EDGE_VOICES[fallback])
+            actual_voice = fallback
 
     logger.info(f"  [TTS] ✅ Audio saved: {output_audio}")
     logger.info(f"  [TTS] ✅ Subtitles saved: {output_srt}")
     words_json_path = output_srt.replace(".srt", "_words.json")
     logger.info(f"  [TTS] ✅ Word timing saved: {words_json_path}")
+    return actual_voice
 
 
 def run_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+50%", voice: str = "hoaimy", raw_text_input: str = None):
-    """Wrapper đồng bộ cho generate_tts."""
-    asyncio.run(generate_tts(text_file, output_audio, output_srt, rate=rate, voice=voice, raw_text_input=raw_text_input))
+    """Wrapper đồng bộ cho generate_tts. Trả về tên giọng THỰC SỰ đã dùng.
+
+    Cần trả về vì có thể khác giọng người dùng chọn (FPT/TikTok hỏng -> lùi về Edge). Không báo
+    ra thì người dùng tưởng 2 giọng khác nhau lại nghe y hệt — đúng tình huống đã gặp: FPT bị 429
+    nên `leminh` âm thầm thành `namminh`.
+    """
+    return asyncio.run(generate_tts(text_file, output_audio, output_srt, rate=rate, voice=voice, raw_text_input=raw_text_input))
 
 
 if __name__ == "__main__":
