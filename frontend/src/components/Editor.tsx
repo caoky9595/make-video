@@ -299,6 +299,14 @@ export const Editor: React.FC = () => {
               localStorage.setItem('editor_voice', e.target.value);
             }}
           >
+            <optgroup label="Google Cloud — chất lượng cao nhất (cần GOOGLE_TTS_API_KEY)">
+              <option value="gg_nam_wavenet">Google WaveNet Nam — 1 triệu ký tự/tháng miễn phí</option>
+              <option value="gg_nam_wavenet2">Google WaveNet Nam 2</option>
+              <option value="gg_nu_wavenet">Google WaveNet Nữ</option>
+              <option value="gg_nu_wavenet2">Google WaveNet Nữ 2</option>
+              <option value="gg_nam_std">Google Standard Nam — 4 triệu ký tự/tháng</option>
+              <option value="gg_nu_std">Google Standard Nữ</option>
+            </optgroup>
             <optgroup label="Hợp ngách bí ẩn — trầm, chỉnh được tốc độ">
               <option value="namminh">⭐ Nam Minh (Edge) — 144Hz, trầm, miễn phí không giới hạn</option>
               <option value="leminh">Lê Minh (FPT) — 122Hz, trầm nhất (giới hạn 100k ký tự/tháng)</option>

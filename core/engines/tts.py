@@ -78,6 +78,22 @@ FPT_VOICES = {
     "linhsan":  {"id": "linhsan",  "gender": "Nữ",  "region": "Nam",    "desc": "Nữ Nam - mềm mại"},
 }
 
+# GOOGLE CLOUD TTS voices (tiếng Việt). Tên giọng theo đúng định danh của Google.
+# Hạn mức miễn phí: 1 triệu ký tự/tháng cho Neural2/Chirp3-HD/Studio, 4 triệu cho Standard —
+# reset hằng tháng, KHÔNG phải bản dùng thử. Kịch bản ~400 ký tự nên 5 video/ngày chỉ tốn
+# ~60k/tháng, không bao giờ chạm trần.
+# Cần GOOGLE_TTS_API_KEY trong .env (tạo ở console.cloud.google.com, bật Cloud Text-to-Speech API).
+# DANH SÁCH NÀY CÓ THỂ THIẾU/LỖI THỜI — Google thêm bớt giọng theo thời gian. Chạy
+# `python -m core.engines.tts --list-google` để lấy danh sách thật từ API bằng key của bạn.
+GOOGLE_VOICES = {
+    "gg_nam_wavenet":  {"id": "vi-VN-Wavenet-B",  "gender": "Nam", "desc": "Google WaveNet Nam"},
+    "gg_nam_wavenet2": {"id": "vi-VN-Wavenet-D",  "gender": "Nam", "desc": "Google WaveNet Nam 2"},
+    "gg_nu_wavenet":   {"id": "vi-VN-Wavenet-A",  "gender": "Nữ",  "desc": "Google WaveNet Nữ"},
+    "gg_nu_wavenet2":  {"id": "vi-VN-Wavenet-C",  "gender": "Nữ",  "desc": "Google WaveNet Nữ 2"},
+    "gg_nam_std":      {"id": "vi-VN-Standard-B", "gender": "Nam", "desc": "Google Standard Nam"},
+    "gg_nu_std":       {"id": "vi-VN-Standard-A", "gender": "Nữ",  "desc": "Google Standard Nữ"},
+}
+
 # TIKTOK TTS voices
 TIKTOK_VOICES = {
     "tiktok_nu_1": {"gender": "Nữ", "desc": "Giọng TikTok Nữ Review"},
@@ -87,7 +103,7 @@ TIKTOK_VOICES = {
 }
 
 # Tất cả giọng hợp lệ
-ALL_VOICE_KEYS = list(EDGE_VOICES.keys()) + list(FPT_VOICES.keys()) + list(TIKTOK_VOICES.keys())
+ALL_VOICE_KEYS = list(EDGE_VOICES.keys()) + list(FPT_VOICES.keys()) + list(TIKTOK_VOICES.keys()) + list(GOOGLE_VOICES.keys())
 
 # Map tốc độ edge-tts (+20%) sang FPT.AI scale (-3 to +3)
 EDGE_RATE_TO_FPT_SPEED = {
@@ -103,6 +119,10 @@ def get_engine(voice: str) -> str:
     v_lower = voice.lower()
     if v_lower in EDGE_VOICES or voice in EDGE_VOICES.values() or any(v_lower in val.lower() for val in EDGE_VOICES.values()):
         return "edge"
+    elif v_lower in GOOGLE_VOICES or v_lower.startswith("gg_") or v_lower.startswith("vi-vn-"):
+        # Chấp nhận cả tên giọng Google truyền thẳng (vd "vi-VN-Chirp3-HD-Achernar") — danh sách
+        # cứng GOOGLE_VOICES sẽ lỗi thời khi Google thêm giọng mới, không nên chặn người dùng.
+        return "google"
     elif v_lower in FPT_VOICES:
         return "fpt"
     elif v_lower in TIKTOK_VOICES or v_lower.startswith("tiktok_"):
@@ -382,6 +402,75 @@ def _generate_fpt_tts(text: str, output_audio: str, output_srt: str, rate: str, 
 
 
 # ============================================================
+# ENGINE 4: GOOGLE CLOUD TTS
+# ============================================================
+
+def _edge_rate_to_google_speed(rate: str) -> float:
+    """Đổi '+50%' của edge-tts sang speakingRate của Google (1.0 = bình thường, dải 0.25-4.0)."""
+    try:
+        pct = float(str(rate).replace("%", "").strip())
+    except (TypeError, ValueError):
+        pct = 0.0
+    return max(0.25, min(4.0, 1.0 + pct / 100.0))
+
+
+def list_google_voices() -> list:
+    """Lấy danh sách giọng tiếng Việt THẬT từ Google API (tên giọng thay đổi theo thời gian)."""
+    api_key = os.getenv("GOOGLE_TTS_API_KEY")
+    if not api_key:
+        raise ValueError("Chưa cấu hình GOOGLE_TTS_API_KEY trong .env")
+    r = requests.get(
+        f"https://texttospeech.googleapis.com/v1/voices?languageCode=vi-VN&key={api_key}",
+        timeout=20)
+    if r.status_code != 200:
+        raise RuntimeError(f"Google TTS lỗi khi lấy danh sách giọng: HTTP {r.status_code} - {r.text[:200]}")
+    return r.json().get("voices", [])
+
+
+def _generate_google_tts(text: str, output_audio: str, output_srt: str, rate: str, voice: str):
+    """Sinh audio bằng Google Cloud TTS (REST + API key)."""
+    import base64
+
+    api_key = os.getenv("GOOGLE_TTS_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "❌ Chưa cấu hình GOOGLE_TTS_API_KEY!\n"
+            "   Thêm vào .env: GOOGLE_TTS_API_KEY=your_key\n"
+            "   Lấy key: console.cloud.google.com -> bật Cloud Text-to-Speech API -> Credentials."
+        )
+
+    info = GOOGLE_VOICES.get(voice.lower())
+    voice_id = info["id"] if info else voice   # cho phép truyền thẳng tên giọng Google
+    logger.info(f"  [TTS] Engine: Google Cloud TTS | Voice: {voice_id}")
+
+    payload = {
+        "input": {"text": text},
+        "voice": {"languageCode": "vi-VN", "name": voice_id},
+        "audioConfig": {"audioEncoding": "MP3", "speakingRate": _edge_rate_to_google_speed(rate)},
+    }
+    r = requests.post(
+        f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}",
+        json=payload, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"Google TTS API error: HTTP {r.status_code} - {r.text[:300]}")
+
+    audio_b64 = r.json().get("audioContent")
+    if not audio_b64:
+        raise RuntimeError(f"Google TTS không trả về audio. Phản hồi: {str(r.json())[:200]}")
+    with open(output_audio, "wb") as f:
+        f.write(base64.b64decode(audio_b64))
+
+    # Google chỉ trả audio, không có mốc thời gian từng từ -> nội suy từ độ dài audio thật,
+    # cùng cách đang dùng cho FPT.
+    words_data = _interpolate_word_timing_from_audio(text, output_audio)
+    with open(output_srt, "w", encoding="utf-8") as f:
+        f.write(_words_to_srt(words_data))
+    with open(output_srt.replace(".srt", "_words.json"), "w", encoding="utf-8") as f:
+        json.dump(words_data, f, ensure_ascii=False, indent=2)
+    return words_data
+
+
+# ============================================================
 # UTILITY: Word Timing & SRT Generation
 # ============================================================
 
@@ -643,16 +732,6 @@ async def _generate_tiktok_api(text: str, output_audio: str, output_srt: str, ra
 # MAIN ENTRY POINT
 # ============================================================
 
-def _edge_fallback_for(voice: str) -> str:
-    """Chọn giọng Edge thay thế khi FPT/TikTok hỏng, KHỚP GIỚI TÍNH với giọng người dùng chọn.
-
-    Đổi giới tính giữa chừng nghe rất lệch, nhất là kênh kể chuyện có tông giọng cố định.
-    """
-    v = voice.lower()
-    male = v in ("leminh", "giahuy") or v.startswith("tiktok_nam")
-    return "namminh" if male else "hoaimy"
-
-
 async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+50%", voice: str = "hoaimy", raw_text_input: str = None):
     """
     Đọc file kịch bản hoặc nhận text trực tiếp, sinh ra audio MP3 và subtitle SRT.
@@ -692,35 +771,24 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
     # Chọn engine dựa trên tên giọng
     engine = get_engine(voice)
 
-    actual_voice = voice   # giọng THỰC SỰ dùng — khác `voice` nếu phải lùi về Edge
+    # KHÔNG fallback sang giọng khác khi lỗi. Đã thử cách đó và nó gây hiểu nhầm: FPT bị 429 thì
+    # `leminh` âm thầm thành `namminh`, người dùng chọn 2 giọng khác nhau lại nghe y hệt mà không
+    # biết vì sao. Thà hỏng job và báo rõ còn hơn ra sản phẩm sai giọng.
     if engine == "edge":
         voice_id = EDGE_VOICES.get(voice.lower(), voice)
         await _generate_edge_tts(text, output_audio, output_srt, rate, voice_id)
-    else:
-        # FPT và TikTok đều có thể hỏng vì lý do NGOÀI tầm kiểm soát và chỉ là tạm thời:
-        # FPT free tier chặn theo tần suất (HTTP 429 "rate limit exceeded for 'free'") và có hạn
-        # mức 100k ký tự/tháng; TikTok thì cần TIKTOK_SESSION_ID vốn hay hết hạn.
-        # Trước đây lỗi này ném thẳng lên và GIẾT CẢ JOB RENDER — mất toàn bộ video chỉ vì một
-        # lỗi tạm thời, dù Edge đang rảnh, miễn phí và không giới hạn. Nay tự lùi về Edge.
-        try:
-            if engine == "tiktok":
-                await _generate_tiktok_api(text, output_audio, output_srt, rate, voice)
-            else:
-                _generate_fpt_tts(text, output_audio, output_srt, rate, voice)
-        except Exception as e:
-            fallback = _edge_fallback_for(voice)
-            logger.warning(
-                f"  [TTS] Giọng '{voice}' ({engine}) lỗi: {str(e)[:120]} "
-                f"-> tự chuyển sang Edge '{fallback}' để không hỏng cả video."
-            )
-            await _generate_edge_tts(text, output_audio, output_srt, rate, EDGE_VOICES[fallback])
-            actual_voice = fallback
+    elif engine == "google":
+        _generate_google_tts(text, output_audio, output_srt, rate, voice)
+    elif engine == "tiktok":
+        await _generate_tiktok_api(text, output_audio, output_srt, rate, voice)
+    elif engine == "fpt":
+        _generate_fpt_tts(text, output_audio, output_srt, rate, voice)
 
     logger.info(f"  [TTS] ✅ Audio saved: {output_audio}")
     logger.info(f"  [TTS] ✅ Subtitles saved: {output_srt}")
     words_json_path = output_srt.replace(".srt", "_words.json")
     logger.info(f"  [TTS] ✅ Word timing saved: {words_json_path}")
-    return actual_voice
+    return voice
 
 
 def run_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+50%", voice: str = "hoaimy", raw_text_input: str = None):
@@ -735,7 +803,10 @@ def run_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--list-voices":
+    if len(sys.argv) > 1 and sys.argv[1] == "--list-google":
+        for v in list_google_voices():
+            print(f"  {v['name']:34s} {v.get('ssmlGender',''):8s} {v.get('naturalSampleRateHertz','')}Hz")
+    elif len(sys.argv) > 1 and sys.argv[1] == "--list-voices":
         list_voices()
     else:
         voice = sys.argv[2] if len(sys.argv) > 2 else "hoaimy"
