@@ -341,24 +341,27 @@ def api_script_generate():
         Nhiệm vụ: Biến ý tưởng "{idea}" thành kịch bản video sự thật/tâm lý thuần giá trị, tối ưu để người xem LƯU lại và BẤM FOLLOW.
 
         Quy tắc Chế độ GIÁ TRỊ (XÂY FOLLOW — KHÔNG BÁN HÀNG):
-        1. **3-5 TỪ ĐẦU TIÊN QUYẾT ĐỊNH TẤT CẢ — PHẢI vào thẳng nội dung, CẤM từ đệm mở bài.**
-           Người xem bỏ đi ở GIÂY THỨ 1, không phải ở cuối câu đầu. Mỗi từ đệm ở đầu là một phần
-           của giây quyết định bị vứt đi. Đo thực tế trên kênh này: 1 video mở bằng "Bạn có biết vì
-           sao..." — hết trọn 1 giây đầu mà chưa nói được thông tin gì, kết quả chỉ 3,1% người xem
-           hết (ngưỡng cần ~70%), phần lớn thoát đúng mốc 0:01.
-           CẤM TUYỆT ĐỐI mở đầu bằng các cụm sau (và mọi biến thể tương tự):
-           "Bạn có biết...", "Bạn có bao giờ...", "Bạn đã từng...", "Hôm nay mình sẽ...",
-           "Có một sự thật là...", "Bạn có thắc mắc...", "Chào các bạn...".
-           BẮT BUỘC: từ đầu tiên của kịch bản phải là 1 CON SỐ ("99%", "90%") hoặc đi thẳng vào
-           điều gây bất ngờ. Câu đầu nêu rõ 1 ĐIỀU ĐA SỐ ĐANG HIỂU SAI hoặc 1 SỰ THẬT GÂY BẤT NGỜ.
-           - SAI (từ đệm, phí mất giây vàng): "Bạn có biết vì sao mình thường quên tên người mới gặp không?"
-           - SAI (chỉ mô tả, không có bất ngờ): "Mình thường quên tên người mới gặp."
-           - ĐÚNG (con số đập vào ngay từ đầu): "99% người nghĩ quên tên là do trí nhớ kém — sự thật thì không phải vậy."
-           - ĐÚNG (vào thẳng điều ngược đời): "Quên tên người khác KHÔNG phải do trí nhớ kém đâu."
-           Công thức gợi ý: "[Đa số/99%/Bạn] nghĩ/tin [điều X] — [nhưng/sự thật thì] [điều ngược lại]..." hoặc "[Hiện tượng Y] không phải do [nguyên nhân ai cũng nghĩ] mà do...".
-           TỰ KIỂM TRA trước khi viết tiếp: đọc to 5 TỪ ĐẦU TIÊN — chúng đã nói được điều gì bất ngờ
-           chưa, hay mới chỉ là lời rào đón? Nếu là rào đón thì XOÁ HẲN phần rào đón đó đi và bắt đầu
-           lại từ chính thông tin gây sốc.
+        1. **MỞ ĐẦU BẰNG MỘT TÌNH HUỐNG CỤ THỂ NGƯỜI XEM TỪNG TRẢI — KHÔNG mở bằng khẳng định trừu tượng.**
+           Đo thực tế trên kênh này (8 video): người xem rời ở GIÂY 0:01. Đã thử đổi hình (anime ->
+           nền chữ động) và đổi giọng, thời gian xem KHÔNG nhúc nhích (vẫn 2,8-4,2s) -> nút thắt
+           nằm ở NỘI DUNG câu đầu, không phải hình hay tiếng.
+           Vì sao khuôn cũ hỏng: 6/8 video mở bằng khẳng định về "não bộ" ("90% trì hoãn không phải
+           vì lười", "Não nhớ lời chê lâu hơn lời khen"). Trong 1 giây, người đang lướt KHÔNG xử lý
+           nổi một khẳng định trừu tượng về cơ chế vô hình — nhưng nhận ra NGAY một cảnh mình từng
+           sống. Phải làm họ nghĩ "sao nó biết" trước khi kịp vuốt tiếp.
+           BẮT BUỘC: câu đầu tiên là 1 KHOẢNH KHẮC CỤ THỂ, quay được thành hình, có chi tiết đời
+           thường (đồ vật, con số, hành động). KHÔNG nhắc chữ "não" ở câu đầu. Câu THỨ HAI mới lật
+           ngược và giải thích cơ chế.
+           - SAI (khẳng định trừu tượng, đúng khuôn đang hỏng): "90% trì hoãn không phải vì lười đâu."
+           - SAI (từ đệm, phí giây vàng): "Bạn có biết vì sao mình hay trì hoãn không?"
+           - ĐÚNG (cảnh cụ thể, thấy được): "Mở laptop định làm việc. Mười phút sau đang lau bàn."
+           - ĐÚNG (cảnh cụ thể có con số): "Sếp khen chín câu, chê một câu. Tối đó bạn nghĩ về câu nào?"
+           - ĐÚNG (cảnh cụ thể): "Đi vào bếp, đứng đực ra, quên mất mình định lấy gì."
+           TỰ KIỂM TRA: câu đầu có HÌNH DUNG ĐƯỢC thành một cảnh không? Nếu nó là lời phát biểu về
+           "não"/"tâm lý"/"đa số người" thì SAI — viết lại thành cảnh cụ thể rồi mới sang cơ chế.
+           TRÁNH LẶP: mỗi kịch bản phải mở bằng một loại tình huống khác nhau (nơi chốn, đồ vật,
+           thời điểm khác nhau) — kênh đang bị 6/8 video giống hệt khuôn nên người xem lướt qua
+           vì tưởng đã xem rồi.
         2. **KHÔNG bán hàng**, không nhắc sản phẩm/thương hiệu cụ thể, không CTA giỏ hàng.
         3. Sự thật/lý giải phải THỰC SỰ đúng, có căn cứ hợp lý (tâm lý học/khoa học hành vi/quan sát đời thường) — không bịa số liệu, không giật gân sai sự thật (tránh vi phạm chính sách misleading).
         4. Thân bài: giải thích rõ ràng, dễ hiểu, không lan man, không dùng thuật ngữ hàn lâm khó hiểu.
