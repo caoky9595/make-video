@@ -687,34 +687,42 @@ def _prepare_non_loop_background(bg_path: str, duration: float, other_bg_paths=N
 
 
 class LazyBackgroundClip:
-    """Trình quản lý Lazy Load cho background video. Chỉ mở 1 video tại một thời điểm để tiết kiệm RAM."""
+    """Trình quản lý Lazy Load cho background video. Chỉ mở 1 video tại một thời điểm để tiết kiệm RAM.
+
+    Chia ĐỀU audio duration cho từng NGUỒN ẢNH/CLIP theo đúng thứ tự đã upload (KHÔNG còn chia
+    theo khối phụ đề SRT như trước). Lý do đổi: SRT của Edge-TTS nhóm 5 từ/khối
+    (`tts.py::_words_to_srt`), nên kịch bản ~70 từ ra ~14 khối trong khi trợ lý "Hoạt hình Veo
+    thủ công" chỉ tạo ~4 clip — code cũ gán `visual_sources[i % len(visual_sources)]` theo CHỈ SỐ
+    KHỐI SRT khiến clip 1 (cảnh mở đầu) bị lặp lại ở khối thứ 5, 9, 13 (tức giữa và gần cuối
+    video), mỗi lần chỉ phát ~2 giây rồi cắt — phá vỡ đúng thứ tự kể chuyện mà người dùng đã sắp
+    xếp theo tên file `1_, 2_, 3_...`. Chia đều theo thời gian đảm bảo clip N chỉ phát đúng 1 lần,
+    đúng thứ tự, không phụ thuộc cách TTS/giọng đọc nhóm phụ đề.
+    """
 
     CROSSFADE_SEC = 0.3  # thời lượng chuyển cảnh mượt ở đầu mỗi scene (trừ scene đầu tiên)
 
-    def __init__(self, subs, duration, visual_sources):
-        self.subs = subs
+    def __init__(self, duration, visual_sources):
         self.duration = duration
         self.visual_sources = visual_sources
 
         self.scenes = []
         self.actually_used = []
 
-        for i, sub in enumerate(subs):
-            start_t = sub["start"]
-            end_t = subs[i+1]["start"] if i+1 < len(subs) else duration
-            scene_duration = end_t - start_t
-
-            asset_p = visual_sources[i % len(visual_sources)] if visual_sources else None
-
-            if asset_p:
+        n = len(visual_sources)
+        if n > 0:
+            seg_duration = duration / n
+            for i, asset_p in enumerate(visual_sources):
+                start_t = i * seg_duration
+                # Cảnh cuối lấy hết phần dư (tránh lệch vài mili-giây do chia không tròn số).
+                end_t = duration if i == n - 1 else (i + 1) * seg_duration
                 self.scenes.append({
                     "start": start_t,
                     "end": end_t,
-                    "duration": scene_duration,
-                    "asset": asset_p
+                    "duration": end_t - start_t,
+                    "asset": asset_p,
                 })
                 self.actually_used.append(asset_p)
-            
+
         self.current_idx = -1
         self.current_clip = None
         self.current_start_t = 0.0

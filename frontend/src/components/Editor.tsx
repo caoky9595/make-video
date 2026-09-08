@@ -299,7 +299,7 @@ export const Editor: React.FC = () => {
               localStorage.setItem('editor_voice', e.target.value);
             }}
           >
-            <optgroup label="Google Cloud — chất lượng cao nhất (cần GOOGLE_TTS_API_KEY)">
+            <optgroup label="Google Cloud — chất lượng cao nhất (cần xác minh billing, xem ghi chú dưới)">
               <option value="gg_nam_wavenet">Google WaveNet Nam — 1 triệu ký tự/tháng miễn phí</option>
               <option value="gg_nam_wavenet2">Google WaveNet Nam 2</option>
               <option value="gg_nu_wavenet">Google WaveNet Nữ</option>
@@ -329,6 +329,13 @@ export const Editor: React.FC = () => {
             <p style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.4 }}>
               Giọng TikTok cần <b>TIKTOK_SESSION_ID</b> trong file <code>.env</code>.
               Đăng nhập tiktok.com trên trình duyệt → mở DevTools → Application → Cookies → copy giá trị <code>sessionid</code>.
+            </p>
+          )}
+          {selectedVoice.startsWith('gg_') && (
+            <p style={{ fontSize: '10px', color: '#f59e0b', marginTop: '4px', lineHeight: 1.4 }}>
+              ⚠️ Cần <b>GOOGLE_TTS_API_KEY</b> trong <code>.env</code> VÀ project Google Cloud đã <b>xác minh
+              billing</b> (thêm thẻ, dù dùng trong hạn miễn phí) — chỉ có key thôi sẽ báo lỗi khi xuất video.
+              Không có sẵn: dùng <b>Nam Minh (Edge)</b> ở nhóm dưới, miễn phí không giới hạn, không cần cấu hình gì thêm.
             </p>
           )}
 

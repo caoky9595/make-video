@@ -2,7 +2,6 @@ import os
 import platform
 import time
 import json
-import random
 import re
 import subprocess
 import numpy as np
@@ -22,7 +21,6 @@ from core.engines.video_maker import (
     _select_video_encoder,
     _mix_audio_with_ducking,
     _mix_audio_simple,
-    _parse_srt,
     _ColorSource,
     open_ffmpeg_with_log,
     check_ffmpeg_result,
@@ -118,22 +116,21 @@ def _write_lazy_clip_to_file(bg_clip, filepath: str, duration: float, fps: int):
     check_ffmpeg_result(process, filepath, ffmpeg_log)
 
 
-def _prepare_bg_only_clip(duration: float, visual_sources: list, srt_path: str):
-    """Chuẩn bị background video từ ảnh/video người dùng upload, giống logic trong video_maker.py."""
-    subs = _parse_srt(srt_path)
+def _prepare_bg_only_clip(duration: float, visual_sources: list):
+    """Chuẩn bị background video từ ảnh/video người dùng upload, giống logic trong video_maker.py.
 
+    Chia đều audio duration cho từng nguồn theo ĐÚNG THỨ TỰ đã upload (trợ lý "Hoạt hình Veo thủ
+    công" dặn đặt tên clip 1_, 2_, 3_...) — không còn dựa vào khối phụ đề SRT (xem lý do ở
+    docstring của LazyBackgroundClip trong video_maker.py).
+    """
     if not visual_sources:
         return _ColorSource(color=(30, 30, 30), duration=duration)
 
-    # LOGIC MULTI-SCENE
-    if not subs:
-        chosen_bg = random.choice(visual_sources)
-        return _prepare_visual_background(chosen_bg, duration, visual_sources)
+    if len(visual_sources) == 1:
+        return _prepare_visual_background(visual_sources[0], duration, visual_sources)
 
-    # KHÔNG xáo trộn — giữ đúng thứ tự cảnh người dùng đặt tên (trợ lý "Hoạt hình Veo
-    # thủ công": clip 1_, 2_, 3_...).
     from core.engines.video_maker import LazyBackgroundClip
-    return LazyBackgroundClip(subs, duration, visual_sources)
+    return LazyBackgroundClip(duration, visual_sources)
 
 
 def make_video_gsap(
@@ -195,7 +192,7 @@ def make_video_gsap(
             progress_callback(45, "Chế độ chữ động — không cần clip nền.")
     else:
         visual_sources = _collect_visual_sources(image_dir=image_dir, uploaded_images=uploaded_images)
-        bg_clip = _prepare_bg_only_clip(duration, visual_sources, srt_path)
+        bg_clip = _prepare_bg_only_clip(duration, visual_sources)
         logger.info(f"  [GSAP Render] Đang xuất background clip không chữ ra: {temp_bg_path}...")
         if progress_callback:
             progress_callback(35, "Đang xử lý tài nguyên nền...")

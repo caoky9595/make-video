@@ -4,7 +4,9 @@ main.py - CLI tạo video TikTok từ kịch bản
 ===========================================
 Pipeline: Kịch bản text -> TTS (giọng + phụ đề) -> render với video/ảnh đã có sẵn.
 
-Dùng cho ngách Mẹo Vặt Nhà Bếp & Gia Đình (giai đoạn xây follower).
+Dùng cho ngách Bí Ẩn & Vụ Án Có Thật (giai đoạn xây follower). Đây là giao diện CLI phụ —
+luồng chính (sinh kịch bản AI, trợ lý prompt cảnh Veo, sắp thứ tự cảnh...) nằm ở web app
+(`python app.py`), file này chỉ hữu ích khi đã có sẵn script.txt + media muốn render tay.
 Không upload tự động — đăng thủ công (xem channel_strategy.md, RULES.md).
 
 Video nền lấy từ thư mục ảnh/video đã upload (vd clip tự tạo bằng Google Flow/Veo,
@@ -83,8 +85,8 @@ def main():
     parser.add_argument("--position", default="bottom", choices=["center", "bottom"])
     parser.add_argument("--image-dir", default="uploaded_images", help="Thư mục chứa ảnh/video nền đã upload (vd clip Google Flow)")
     parser.add_argument("--bgm-dir", default="audio_bg")
-    parser.add_argument("--rate", default="+50%")
-    parser.add_argument("--voice", default="tiktok_nu_1", help="tiktok_nu_1/tiktok_nam_1 (cần TIKTOK_SESSION_ID), banmai (FPT), hoaimy/namminh (Edge dự phòng)")
+    parser.add_argument("--rate", default="+0%")
+    parser.add_argument("--voice", default="namminh", help="namminh (Edge, mặc định — miễn phí không giới hạn, không cần cấu hình), leminh (FPT, trầm hơn), tiktok_nu_1/tiktok_nam_1 (cần TIKTOK_SESSION_ID)")
 
     args = parser.parse_args()
     cmd_create(args)

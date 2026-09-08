@@ -337,7 +337,11 @@ def api_script_generate():
     # Nay để 0.80-0.95 lần trần, và TARGET_SEC tính từ chính giữa khoảng mục tiêu.
     TARGET_LO = int(SCRIPT_WORD_CAP * 0.80)
     TARGET_HI = int(SCRIPT_WORD_CAP * 0.95)
-    TARGET_SEC = round((TARGET_LO + TARGET_HI) / 2 * 5 / 20)
+    # Chia cho CHARS_PER_SECOND_ESTIMATE (12 ký tự/giây, đo thật với giọng mặc định namminh),
+    # KHÔNG phải mốc cũ 20 của giọng TikTok đọc nhanh: với trần 75 từ, mốc cũ bảo AI "video
+    # khoảng 16 giây" trong khi chính khoảng từ đó ra 27 giây — prompt lại tự mâu thuẫn đúng
+    # kiểu lỗi đã sửa ở đoạn trên, và UI thì hiển thị 27s nên người dùng thấy vênh.
+    TARGET_SEC = round((TARGET_LO + TARGET_HI) / 2 * 5 / 12)
 
     if mode == "viral":
         prompt = f"""Bạn là người kể chuyện TikTok ngách Bí Ẩn & Vụ Án Có Thật, kéo VIEW và FOLLOW cho kênh mới.
@@ -610,9 +614,13 @@ def api_scene_prompts_generate():
     return jsonify({"scenes": scenes, "recommended_duration_sec": duration_sec})
 
 
-# Hashtag cố định của ngách (RULES.md mục 3) — luôn có mặt để thuật toán hiểu đúng ngách kênh.
+# Hashtag cố định của ngách — luôn có mặt để thuật toán hiểu đúng ngách kênh.
 # Giữ ít và đúng ngách thay vì nhồi chục hashtag chung chung (làm loãng tín hiệu phân phối).
-NICHE_HASHTAGS = ["#suthat", "#tamly", "#tamlyhoc", "#xuhuong", "#fyp"]
+# Đổi theo ngách Bí Ẩn & Vụ Án Có Thật (commit 4853c62) — bộ cũ (#suthat #tamly #tamlyhoc) là
+# tag của ngách Sự Thật Thú Vị & Tâm Lý Cuộc Sống đã bỏ, sót lại khi chuyển ngách nên mọi caption
+# sinh ra sau đó vẫn gắn nhầm hashtag của ngách cũ. CHƯA kiểm chứng độ hiệu quả tìm kiếm thật của
+# #bian/#vuan trên TikTok (xem RULES.md mục 3 cần cập nhật lại) — nên để ý qua vài video đầu.
+NICHE_HASHTAGS = ["#bian", "#vuan", "#bimat", "#xuhuong", "#fyp"]
 
 
 def _strip_vietnamese_accents(text: str) -> str:
@@ -634,8 +642,8 @@ def _strip_vietnamese_accents(text: str) -> str:
 def api_publish_kit_generate():
     """Sinh caption + hashtag sẵn sàng dán lên TikTok từ kịch bản của video vừa render.
 
-    Caption theo đúng playbook kênh (channel_strategy.md mục 9): câu gợi tò mò/đặt câu hỏi để
-    kéo bình luận, KHÔNG giật tít sai sự thật (RULES.md mục 3).
+    Caption theo đúng playbook kênh: câu gợi tò mò/đặt câu hỏi để kéo bình luận, KHÔNG giật tít
+    sai sự thật, KHÔNG kết luận thay việc còn bỏ ngỏ (đúng tinh thần ngách Bí Ẩn & Vụ Án Có Thật).
     """
     data = request.json or {}
     script = (data.get("script") or "").strip()
@@ -644,7 +652,7 @@ def api_publish_kit_generate():
 
     from core.engines.bg_finder import call_llm_with_fallback
 
-    prompt = f"""Viết caption TikTok tiếng Việt cho video thuộc ngách "Sự Thật Thú Vị & Tâm Lý Cuộc Sống".
+    prompt = f"""Viết caption TikTok tiếng Việt cho video thuộc ngách "Bí Ẩn & Vụ Án Có Thật".
 
 Kịch bản video: {script[:1000]}
 

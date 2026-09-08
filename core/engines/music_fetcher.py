@@ -42,6 +42,10 @@ MOOD_QUERIES = {
     "epic_dramatic_orchestral": ["epic cinematic", "dramatic orchestral", "epic drums"],
     "cosmic_space_ambient": ["space ambient", "cosmic pad", "deep space"],
     "melancholic_emotional_piano": ["sad emotional piano", "melancholy piano", "slow piano"],
+    # Mood cho kịch bản affiliate/digital_aff (GĐ2 — xem DEFAULT_MOOD_QUERY_AFFILIATE trong
+    # music_finder.py): thư viện trước đó chỉ có 6 mood bí ẩn nên nội dung quảng cáo sản phẩm/app
+    # luôn bị gắn nhầm nhạc rùng rợn. Thêm mood tích cực/nhẹ nhàng hợp giọng affiliate hơn.
+    "upbeat_calm_acoustic_practical": ["calm acoustic guitar", "upbeat corporate positive", "lofi chill motivational"],
 }
 
 

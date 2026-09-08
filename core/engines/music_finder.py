@@ -45,6 +45,17 @@ MOOD_KEYWORDS = {
 # thường/tâm lý (không quá kịch tính như "cinematic" chung chung trước đây).
 DEFAULT_MOOD_QUERY = "dark mysterious suspense ambient"
 
+# Kịch bản mode affiliate/digital_aff (GĐ2 — quảng cáo sản phẩm/app) không chứa từ khoá bí ẩn
+# nào ở trên nên luôn rơi vào DEFAULT_MOOD_QUERY — tức 1 video bán app thư giãn/sổ tay kế hoạch
+# bị gắn nhạc rùng rợn/căng thẳng của ngách chính. Nhận diện riêng bằng từ khoá ĐẶC TRƯNG của
+# kịch bản affiliate (giỏ hàng, ứng dụng, nỗi đau cụ thể...) để rơi vào mood tích cực hơn thay vì
+# mood mặc định của ngách bí ẩn.
+AFFILIATE_SIGNAL_KEYWORDS = [
+    r"giỏ hàng", r"tiktok shop", r"ứng dụng", r"dịch vụ", r"link.{0,15}bio",
+    r"trì hoãn", r"mất ngủ", r"khó tập trung", r"thói quen", r"thư giãn",
+]
+DEFAULT_MOOD_QUERY_AFFILIATE = "upbeat calm acoustic practical"
+
 
 def _extract_music_query(script_text: str, custom_query: str = "") -> str:
     """Xác định 1 mood-query cho kịch bản bằng cách CỘNG DỒN điểm khớp từ khoá mỗi nhóm mood,
@@ -61,6 +72,8 @@ def _extract_music_query(script_text: str, custom_query: str = "") -> str:
             scores[mood_query] = score
 
     if not scores:
+        if any(re.search(kw, script_lower) for kw in AFFILIATE_SIGNAL_KEYWORDS):
+            return DEFAULT_MOOD_QUERY_AFFILIATE
         return DEFAULT_MOOD_QUERY
     return max(scores, key=scores.get)
 
