@@ -370,13 +370,20 @@ def api_script_generate():
            cần thiết. Sự bí ẩn mới giữ người xem, không phải sự ghê rợn.
         7. Độ dài lời thoại: mục tiêu ~{TARGET_LO}-{TARGET_HI} từ (video khoảng {TARGET_SEC} giây).
            GIỚI HẠN CỨNG: không vượt quá {SCRIPT_WORD_CAP} từ.
-        8. **Câu chốt cuối cùng khớp với kiểu kết đã chọn ở mục 4:**
-           - Nếu bỏ ngỏ: đặt CÂU HỎI cho người xem chọn giả thuyết hoặc đoán kết quả, vd "Bạn
-             nghiêng về giả thuyết nào — tai nạn hay có người thứ ba?".
-           - Nếu đã hé lộ lời giải: chốt bằng câu mời phản ứng/bình luận, vd "Bạn có đoán được
-             không?", "Chi tiết nào khiến bạn bất ngờ nhất?" — không hỏi đoán nữa vì đáp án đã nói.
+        8. **Câu chốt cuối cùng: KHẲNG ĐỊNH, KHÔNG đặt câu hỏi ngược lại khán giả.** Nhiệm vụ của
+           mình là KỂ CHO NGƯỜI XEM BIẾT, không phải bắt họ tự đoán. Tuyệt đối không dùng các kiểu
+           "Bạn nghĩ sao?", "Bạn đoán được không?", "Theo bạn thì...?" — đó là đùn việc kể chuyện
+           sang cho khán giả, nghe hụt hẫng vì họ xem để được biết, không phải để bị hỏi ngược.
+           - Nếu bỏ ngỏ: NÓI THẲNG hiện trạng như một sự thật đã biết — giả thuyết nào đang được
+             tin nhiều nhất (nếu có), hoặc xác nhận dứt khoát đến nay vẫn chưa ai lý giải được.
+             vd: "Đến nay, giả thuyết được tin nhiều nhất vẫn là có người thứ ba trong lều đêm đó
+             — nhưng không ai chứng minh được." / "Không một nhà điều tra nào, kể cả FBI, đưa ra
+             được lời giải cho tới hôm nay."
+           - Nếu đã hé lộ lời giải: chốt bằng 1 câu khẳng định nêu rõ Ý NGHĨA/hệ quả/dư âm của sự
+             thật vừa nói — để lại cảm giác, không phải câu hỏi. vd: "Từ đó, không ai trong làng
+             còn dám nhắc tới cái tên đó nữa."
 
-        Cấu trúc: Thả vào giữa sự việc -> chi tiết lạ tăng dần -> chốt bỏ ngỏ HOẶC hé lộ đáp án thật + câu hỏi/mời phản ứng.
+        Cấu trúc: Thả vào giữa sự việc -> chi tiết lạ tăng dần -> chốt bằng câu KHẲNG ĐỊNH (bỏ ngỏ hiện trạng HOẶC hé lộ đáp án thật), không phải câu hỏi.
         Quy tắc: văn nói tự nhiên, kể như đang thì thầm với bạn. CHỈ TRẢ VỀ lời thoại thuần —
         KHÔNG nhãn cấu trúc, KHÔNG markdown, KHÔNG mô tả cảnh quay hay timestamp.
         """
