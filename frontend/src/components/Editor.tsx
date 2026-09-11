@@ -520,7 +520,7 @@ export const Editor: React.FC = () => {
              <select className="input-field" style={{ fontSize: '12px', flex: '0 0 260px', cursor: 'pointer' }}
                      value={scriptMode}
                      onChange={(e) => { setScriptMode(e.target.value); localStorage.setItem('editor_script_mode', e.target.value); }}>
-               <option value="viral">Sự thật/Tâm lý (GĐ1 — xây follower, khuyến nghị)</option>
+               <option value="viral">Bí Ẩn & Vụ Án (GĐ1 — xây follower, khuyến nghị)</option>
                <option value="affiliate">Affiliate sản phẩm vật lý (GĐ2 — cần quay thật)</option>
                <option value="digital_aff">Affiliate sản phẩm số (app/dịch vụ — không cần quay)</option>
              </select>

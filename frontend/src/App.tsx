@@ -191,7 +191,7 @@ function App() {
                   <span className="glow-text" style={{ fontStyle: 'italic' }}>Creator! 🚀</span>
                 </h1>
                 <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem', maxWidth: '600px', marginBottom: '2rem' }}>
-                  Hệ thống AI Affiliate của bạn đã sẵn sàng. Giao diện mới sử dụng React + Vanilla CSS mang lại trải nghiệm mượt mà và tối ưu nhất.
+                  Hệ thống AI sản xuất video của bạn đã sẵn sàng. Giao diện mới sử dụng React + Vanilla CSS mang lại trải nghiệm mượt mà và tối ưu nhất.
                 </p>
                 <button className="glow-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }} onClick={() => setActivePage('editor')}>
                   <span className="icon">rocket_launch</span>
