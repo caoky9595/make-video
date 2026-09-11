@@ -216,13 +216,17 @@ def split_script_into_sentences(script_text: str) -> list:
 # Vì đây là hội thoại (không có dropdown), người dùng phải NÓI rõ mốc này trong chat trước khi
 # bấm phê duyệt.
 FLOW_DURATION_OPTIONS = [4, 6, 8]
-CHARS_PER_SECOND_ESTIMATE = 12  # đo THỰC TẾ trên kịch bản 236 ký tự với giọng mặc định mới
-# (namminh / Edge / rate +0%): 19,5 giây -> 12,1 ký tự/giây. Mốc cũ 20 ký tự/giây lấy từ giọng
-# TikTok nữ đọc nhanh (+50%), sai lệch lớn với giọng kể chuyện chậm -> app ước lượng THIẾU thời
-# lượng audio nên chia THIẾU cảnh, clip hết trước khi audio hết.
-# Đổi giọng hoặc đổi tốc độ thì phải đo lại con số này. Tham chiếu đã đo:
-#   namminh  +0%  -> 12,1 ký tự/giây      namminh -10% -> 10,9
-#   tiktok_nam_1  -> 16,7 (không chỉnh được tốc độ)
+CHARS_PER_SECOND_ESTIMATE = 17  # đo THỰC TẾ với giọng mặc định MỚI `tiktok_nam_1`: kịch bản 242
+# ký tự -> 14,09 giây -> 17,2 ký tự/giây (đo 11/09/2026, khớp với mốc 16,7 đo trước đó). Đã bỏ
+# hẳn FPT (leminh) vì free tier liên tục 429 trong lúc dùng thực tế, và bỏ namminh (Edge) vì nghe
+# ra âm Nam Bộ chứ không phải Bắc như suy đoán ban đầu — namminh trước đó là 12,1 ký tự/giây,
+# CHẬM HƠN ~40% so với tiktok_nam_1, nên số này ảnh hưởng cả DEFAULT_SCRIPT_WORD_CAP (app.py) lẫn
+# ước lượng % hiển thị trên UI (frontend/.../Editor.tsx dòng tính "X từ ≈ Y giây") — cả 2 chỗ đó
+# PHẢI cùng dùng 17, không được để chỗ 12 chỗ 17 (đúng lỗi TARGET_SEC đã sửa trước đây).
+# tiktok_nam_1 KHÔNG chỉnh được tốc độ (rate luôn cố định), khác các giọng Edge/FPT cũ.
+# Đổi giọng mặc định thì phải đo lại con số này. Tham chiếu đã đo:
+#   tiktok_nam_1  -> 17,2 ký tự/giây (không chỉnh được tốc độ)   <- ĐANG DÙNG
+#   namminh (Edge, đã bỏ)  +0% -> 12,1      leminh (FPT, đã bỏ) -> chưa đo được (429 liên tục)
 
 
 SCENE_EFFORT_PENALTY_SEC = 3  # mỗi cảnh thêm = 1 lần thao tác tay thật trên Flow (dán prompt,
@@ -419,3 +423,165 @@ dựng cảnh), theo đúng thứ tự: ["prompt cảnh 1", "prompt cảnh 2", .
     except Exception as e:
         logger.info(f"  [Scene Prompts] Error: {e}. Dùng mô tả cảnh chung chung làm fallback.")
         return _generic_scene_fallback(sub_texts)
+
+
+# ============================================================
+# CHẾ ĐỘ NỀN "BẢNG HỒ SƠ ĐIỀU TRA" — thay thế clip Flow bằng đồ hoạ dựng bằng code (GSAP), không
+# cần AI video-gen. Xem core/engines/templates/gsap_video.html::window.setCaseFile.
+# ============================================================
+
+CASE_FILE_FALLBACK = {
+    "case_number": "07",
+    "case_title": "HỒ SƠ VỤ ÁN",
+    "status_label": "CHƯA CÓ LỜI GIẢI",
+    "beats": [
+        {"note_lines": ["Nhân chứng cuối cùng nhìn thấy tại [[hiện trường]]."]},
+        {"note_lines": ["Không tìm thấy [[dấu vết rời đi]] nào được ghi nhận."]},
+        {"note_lines": ["Đến nay hồ sơ vẫn còn [[bỏ ngỏ]]."]},
+    ],
+    "photo_caption": "HIỆN TRƯỜNG",
+    "map_caption": "VỊ TRÍ CUỐI CÙNG",
+    "timeline": ["21:40", "22:40", "23:15", "??:??"],
+}
+
+_CASE_FILE_REQUIRED_KEYS = set(CASE_FILE_FALLBACK.keys())
+
+MIN_CASE_FILE_BEATS = 3
+MAX_CASE_FILE_BEATS = 5
+
+
+def generate_case_file_content(script_text: str) -> dict:
+    """Sinh nội dung THẬT cho 'bảng hồ sơ điều tra' (case_number/title/beats/photo/map/timeline)
+    từ chính kịch bản — thay cho nội dung giả lập dùng khi demo style ban đầu.
+
+    `beats`: DANH SÁCH nhiều mốc tình tiết thay vì 1 nội dung tĩnh — bảng phải cảm giác như đang
+    được BỔ SUNG GHI CHÚ MỚI liên tục trong lúc video phát (giống lật từng trang hồ sơ theo đúng
+    diễn biến), không đứng yên từ đầu tới cuối như bản demo gốc chỉ có 1 note cố định.
+
+    Bảng này là NỀN/SET DRESSING chạy song song với phụ đề động (không thay thế phụ đề), nên nội
+    dung ở đây được phép súc tích/khác giọng văn phụ đề (văn phong hồ sơ, không phải lời kể) —
+    không cần khớp nguyên văn từng chữ với script.
+    Trả về dict luôn đủ field (fallback tĩnh nếu AI lỗi/JSON hỏng) để phía render không phải tự
+    xử lý field thiếu.
+    """
+    import json as _json
+
+    if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GROQ_API_KEY"):
+        return _json.loads(_json.dumps(CASE_FILE_FALLBACK))  # deep copy, tránh caller sửa nhầm bản gốc
+
+    n_beats = estimate_ideal_scene_count(script_text, min_scenes=MIN_CASE_FILE_BEATS, max_scenes=MAX_CASE_FILE_BEATS)
+
+    prompt = f"""Bạn dựng nội dung cho 1 "bảng hồ sơ điều tra" (evidence board) làm NỀN cho video kể
+chuyện ngách Bí Ẩn & Vụ Án Có Thật. Đây là đạo cụ hình ảnh chạy NỀN, không phải phụ đề — không cần
+khớp nguyên văn kịch bản, chỉ cần đúng tinh thần và các chi tiết chính. Bảng PHẢI cảm giác như đang
+được BỔ SUNG GHI CHÚ MỚI liên tục trong lúc video phát, không phải 1 tờ giấy đứng yên từ đầu tới cuối.
+
+Kịch bản: {script_text[:1200]}
+
+Viết đúng các trường sau, văn phong HỒ SƠ/TÀI LIỆU (ngắn, khách quan, không phải văn kể chuyện):
+- case_number: 2 chữ số bất kỳ (dạng chuỗi, vd "07")
+- case_title: tiêu đề hồ sơ, TỐI ĐA 28 ký tự, VIẾT HOA, tóm tắt đúng sự việc (vd "MẤT TÍCH TRÊN CHUYẾN TÀU ĐÊM")
+- status_label: 2-4 từ. Nếu vụ CÒN BỎ NGỎ thật sự thì ghi kiểu "CHƯA CÓ LỜI GIẢI"; nếu kịch bản sẽ
+  hé lộ đáp án ở câu cuối thì ghi kiểu "ĐANG ĐIỀU TRA" (bảng KHÔNG được lộ đáp án dù script có nói).
+- beats: mảng ĐÚNG {n_beats} phần tử, mỗi phần tử 1 MỐC TÌNH TIẾT MỚI theo ĐÚNG THỨ TỰ diễn biến
+  trong kịch bản — vd beat 1 là tình huống ban đầu, beat 2 là phát hiện đầu tiên, beat giữa là chi
+  tiết ngày càng khó hiểu, beat cuối là hiện trạng/mốc gần nhất. MỖI phần tử là object dạng
+  {{"note_lines": [...]}} với 1-2 câu ngắn (dưới 16 từ/câu) văn phong ghi chú hồ sơ. Mỗi câu đánh
+  dấu ĐÚNG 1 cụm 1-3 từ bằng [[ ]] (chi tiết nhạy cảm/then chốt nhất câu — sẽ hiện thành vệt đen
+  "đã redact", không phải chữ thật). TUYỆT ĐỐI KHÔNG lặp lại cùng 1 chi tiết ở 2 beat khác nhau —
+  mỗi beat phải mang thông tin MỚI, tiến triển dần, không phải diễn giải lại beat trước.
+- photo_caption: nhãn ảnh hiện trường, TỐI ĐA 22 ký tự, VIẾT HOA (vd "HIỆN TRƯỜNG — 04:12"), lấy giờ
+  hoặc địa điểm nếu kịch bản có nhắc, không có thì bỏ giờ và chỉ ghi địa điểm/khung cảnh chung.
+- map_caption: nhãn mảnh bản đồ, TỐI ĐA 22 ký tự, VIẾT HOA (vd "VỊ TRÍ CUỐI CÙNG").
+- timeline: mảng 3-4 chuỗi giờ/mốc THEO THỨ TỰ THỜI GIAN (định dạng "HH:MM" hoặc mốc mô tả ngắn nếu
+  kịch bản không có giờ cụ thể, vd "TRƯỚC KHI MẤT TÍCH"), mốc CUỐI CÙNG luôn là "??:??".
+
+CHỈ TRẢ VỀ JSON đúng format, đúng {n_beats} phần tử trong "beats":
+{{"case_number":"..","case_title":"..","status_label":"..","beats":[{{"note_lines":["..."]}}],"photo_caption":"..","map_caption":"..","timeline":["..","..","??:??"]}}"""
+
+    try:
+        content = call_llm_with_fallback(prompt, json_mode=True)
+        data = _json.loads(content)
+        if not isinstance(data, dict) or not _CASE_FILE_REQUIRED_KEYS.issubset(data.keys()):
+            logger.warning("  [Case File] AI trả thiếu field, dùng fallback tĩnh.")
+            return _json.loads(_json.dumps(CASE_FILE_FALLBACK))
+        beats = data.get("beats")
+        if not isinstance(beats, list) or not beats or not all(
+            isinstance(b, dict) and isinstance(b.get("note_lines"), list) and b["note_lines"] for b in beats
+        ):
+            logger.warning("  [Case File] AI trả 'beats' sai định dạng, dùng fallback tĩnh.")
+            return _json.loads(_json.dumps(CASE_FILE_FALLBACK))
+        if not isinstance(data.get("timeline"), list) or len(data["timeline"]) < 2:
+            data["timeline"] = CASE_FILE_FALLBACK["timeline"]
+        return data
+    except _json.JSONDecodeError as e:
+        logger.warning(f"  [Case File] JSON lỗi ({e}), dùng fallback tĩnh.")
+        return _json.loads(_json.dumps(CASE_FILE_FALLBACK))
+    except Exception as e:
+        logger.info(f"  [Case File] Error: {e}. Dùng fallback tĩnh.")
+        return _json.loads(_json.dumps(CASE_FILE_FALLBACK))
+
+
+# ============================================================
+# TRỢ LÝ "CLAUDE DESIGN" — nhánh thứ 2 song song với "Hoạt hình Veo thủ công". Khác biệt: Google
+# Flow chỉ sinh HÌNH (không âm thanh, không phụ đề), còn Claude Design tự dựng animation + phụ đề
+# nhưng KHÔNG có giọng đọc riêng — nên trợ lý này đưa CẢ giọng đọc thật (đã ghi âm bằng TTS của
+# app) + mốc thời gian thật của từng câu vào 1 bản "brief" duy nhất, để Claude Design đồng bộ
+# animation đúng theo giọng đọc có sẵn thay vì tự bịa giọng khác.
+# ============================================================
+
+def build_sentence_timings_from_words(words_data: list) -> list:
+    """Gộp word-timing (subtitles_words.json) thành mốc thời gian THEO CÂU — tách tại dấu kết câu
+    (.!?), dùng timestamp THẬT của TTS engine đang dùng (không phân biệt Edge/TikTok/Google, vì
+    đều đã có sẵn words_data chuẩn hoá cùng 1 định dạng). Trả về list (câu, start, end)."""
+    sentences = []
+    buf, start = [], None
+    for w in words_data:
+        text = str(w.get("text", "")).strip()
+        if not text:
+            continue
+        if start is None:
+            start = w["start"]
+        buf.append(text)
+        if re.search(r'[.!?…]["\'”’)]*$', text):
+            sentences.append((" ".join(buf), start, w["end"]))
+            buf, start = [], None
+    if buf and start is not None:
+        sentences.append((" ".join(buf), start, words_data[-1]["end"]))
+    return sentences
+
+
+def generate_claude_design_brief(script_text: str, duration_sec: float, sentence_timings: list,
+                                  audio_filename: str) -> str:
+    """Dựng 1 bản brief để dán thẳng vào Claude Design (Anthropic) — KHÔNG gọi LLM, chỉ ghép
+    template + dữ liệu thời gian THẬT đã đo, vì đây là thông tin cấu trúc/kỹ thuật, không cần văn
+    sáng tạo, và tránh thêm 1 điểm lỗi (429/JSON hỏng) vào bước chuẩn bị vốn đã cần chính xác."""
+    lines = [
+        f'Dựng 1 video dọc 9:16 (1080x1920), đúng {duration_sec:.1f} giây, ngách "Bí Ẩn & Vụ Án '
+        'Có Thật" trên TikTok (kể chuyện 1 vụ án/hiện tượng có thật còn bí ẩn).',
+        "",
+        "PHONG CÁCH: tối, u ám, điện ảnh — như phim tài liệu tội phạm thật, KHÔNG phải hoạt hình "
+        "dễ thương/màu sáng. Được tự do sáng tạo cách kể (nhân vật minh hoạ, hồ sơ giấy tờ, bản "
+        "đồ, dòng thời gian, silhouette...) miễn giữ đúng tông tối/bí ẩn và ĐÚNG SỰ THẬT của vụ "
+        "việc — không bịa thêm chi tiết rùng rợn không có trong kịch bản dưới đây.",
+        "",
+        f"KỊCH BẢN ĐẦY ĐỦ:\n{script_text.strip()}",
+        "",
+        "DIỄN BIẾN THEO ĐÚNG THỜI ĐIỂM GIỌNG ĐỌC THẬT (đã ghi âm sẵn, animation PHẢI khớp các mốc "
+        "này — mỗi mốc là lúc giọng đọc bắt đầu nói câu đó):",
+    ]
+    for text, start, end in sentence_timings:
+        lines.append(f'  {start:.1f}s–{end:.1f}s: "{text}"')
+    lines += [
+        "",
+        f'FILE ÂM THANH: đã đính kèm "{audio_filename}" ở tin nhắn này — dùng ĐÚNG file này làm '
+        "lời thoại của video, TUYỆT ĐỐI KHÔNG tự tạo giọng đọc/giọng AI khác thay thế.",
+        "",
+        "YÊU CẦU KỸ THUẬT:",
+        "- Khung 1080x1920 (dọc, đúng tỉ lệ TikTok).",
+        f"- Tổng thời lượng animation = đúng {duration_sec:.1f} giây, khớp hết file âm thanh, không cắt cụt.",
+        "- Phụ đề chữ hiện đúng lúc giọng đọc nói tới câu đó (theo mốc thời gian ở trên).",
+        "- Không chèn logo/watermark của bên nào khác ngoài kênh cá nhân.",
+        "- Kết bằng 1-2 giây giữ khung hình tĩnh để người xem đọc nốt câu hỏi/câu chốt cuối video.",
+    ]
+    return "\n".join(lines)

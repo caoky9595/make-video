@@ -209,7 +209,7 @@ def _clean_generated_script(text: str) -> str:
 @app.route("/api/voices", methods=["GET"])
 def api_voices():
     """Trả về danh sách tất cả giọng đọc."""
-    from core.engines.tts import EDGE_VOICES, FPT_VOICES, TIKTOK_VOICES
+    from core.engines.tts import EDGE_VOICES, TIKTOK_VOICES
     voices = []
     # TikTok TTS (giọng Việt tự nhiên, hợp viral) — ưu tiên hiển thị đầu danh sách
     tiktok_session_ready = bool(
@@ -230,24 +230,15 @@ def api_voices():
         })
     for key, voice_id in EDGE_VOICES.items():
         gender = "Nữ" if "HoaiMy" in voice_id else "Nam"
-        region = "Bắc"
+        # KHÔNG gán cứng vùng miền — Microsoft không công bố chính thức, và giọng namminh trước
+        # đây gán nhầm "Bắc" trong khi người dùng nghe thật ra âm Nam Bộ (đã bỏ giọng đó).
         voices.append({
             "id": key,
             "name": key.title(),
             "gender": gender,
-            "region": region,
+            "region": "?",
             "engine": "Edge-TTS",
-            "desc": f"{gender} {region}",
-            "free": True,
-        })
-    for key, info in FPT_VOICES.items():
-        voices.append({
-            "id": key,
-            "name": key.title(),
-            "gender": info["gender"],
-            "region": info["region"],
-            "engine": "FPT.AI",
-            "desc": info["desc"],
+            "desc": f"{gender} (chưa rõ vùng miền, tự nghe thử qua preview)",
             "free": True,
         })
     return jsonify(voices)
@@ -337,11 +328,12 @@ def api_script_generate():
     # Nay để 0.80-0.95 lần trần, và TARGET_SEC tính từ chính giữa khoảng mục tiêu.
     TARGET_LO = int(SCRIPT_WORD_CAP * 0.80)
     TARGET_HI = int(SCRIPT_WORD_CAP * 0.95)
-    # Chia cho CHARS_PER_SECOND_ESTIMATE (12 ký tự/giây, đo thật với giọng mặc định namminh),
-    # KHÔNG phải mốc cũ 20 của giọng TikTok đọc nhanh: với trần 75 từ, mốc cũ bảo AI "video
-    # khoảng 16 giây" trong khi chính khoảng từ đó ra 27 giây — prompt lại tự mâu thuẫn đúng
-    # kiểu lỗi đã sửa ở đoạn trên, và UI thì hiển thị 27s nên người dùng thấy vênh.
-    TARGET_SEC = round((TARGET_LO + TARGET_HI) / 2 * 5 / 12)
+    # Chia cho CHARS_PER_SECOND_ESTIMATE (17 ký tự/giây — đo THẬT với giọng mặc định hiện tại
+    # `tiktok_nam_1`, xem bg_finder.py::CHARS_PER_SECOND_ESTIMATE). PHẢI khớp đúng số đó, không
+    # được để lệch (đã có lịch sử lỗi kiểu này 2 lần: mốc 20 của giọng TikTok nữ đọc nhanh dùng
+    # nhầm cho giọng chậm namminh, rồi namminh 12,1 giữ nhầm khi đổi sang giọng nhanh hơn) — lệch
+    # là prompt tự mâu thuẫn: bảo AI "video N giây" trong khi UI/thời lượng thật ra số khác hẳn.
+    TARGET_SEC = round((TARGET_LO + TARGET_HI) / 2 * 5 / 17)
 
     if mode == "viral":
         prompt = f"""Bạn là người kể chuyện TikTok ngách Bí Ẩn & Vụ Án Có Thật, kéo VIEW và FOLLOW cho kênh mới.
@@ -361,8 +353,16 @@ def api_script_generate():
         3. **Thân bài: mỗi câu thêm MỘT chi tiết lạ, tăng dần độ khó hiểu.** Chi tiết phải cụ thể
            (con số, vật chứng, lời khai) — không nói chung chung. Càng kể càng khó hiểu, không được
            giải thích sớm.
-        4. **Kết: chốt bằng giả thuyết BỎ NGỎ, không khép lại.** Nói rõ đến nay vẫn chưa có lời
-           giải, hoặc nêu 2 giả thuyết trái ngược. KHÔNG kết luận dứt khoát.
+        4. **Kết: giữ bí mật đến tận câu cuối — nhưng KHÔNG bắt buộc mãi mãi bỏ ngỏ.** Chọn đúng
+           1 trong 2 kiểu chốt tuỳ vụ việc CÓ THẬT, đừng mặc định luôn là kiểu 1:
+           - **Nếu vụ THẬT SỰ chưa có lời giải chính thức:** chốt bằng giả thuyết bỏ ngỏ, hoặc nêu
+             2 giả thuyết trái ngược. KHÔNG tự bịa ra một đáp án chắc chắn để có vẻ "trọn vẹn".
+           - **Nếu vụ THẬT SỰ đã tìm ra lời giải (kể cả nhiều năm/chục năm sau):** ĐƯỢC PHÉP hé lộ
+             đáp án thật ở câu CUỐI CÙNG — đây là twist ending đúng nghĩa, không phải lỗi tiết lộ
+             sớm. Quy tắc 1 chỉ cấm nói đáp án ở ĐẦU/GIỮA, không cấm nói ở câu chốt.
+           Chọn theo ĐÚNG vụ việc có thật đang kể, không phải theo sở thích — bịa thêm màu bỏ ngỏ
+           cho 1 vụ đã có lời giải thật cũng là kể sai sự thật, giống hệt việc bịa đáp án cho vụ
+           chưa có lời giải.
         5. **Sự việc phải CÓ THẬT, kể đúng sự thật.** Không bịa vụ án, không bịa số liệu, không
            thêm chi tiết rùng rợn không có thật. Nếu chỉ là truyền thuyết/tin đồn thì phải nói rõ
            là chưa kiểm chứng. Bịa chuyện có thật là vi phạm chính sách tin sai lệch.
@@ -370,10 +370,13 @@ def api_script_generate():
            cần thiết. Sự bí ẩn mới giữ người xem, không phải sự ghê rợn.
         7. Độ dài lời thoại: mục tiêu ~{TARGET_LO}-{TARGET_HI} từ (video khoảng {TARGET_SEC} giây).
            GIỚI HẠN CỨNG: không vượt quá {SCRIPT_WORD_CAP} từ.
-        8. **Kết thúc bằng CÂU HỎI cho người xem trả lời**, dạng chọn 1 trong 2 hoặc đoán giả thuyết:
-           "Bạn nghiêng về giả thuyết nào — tai nạn hay có người thứ ba?", "Bạn nghĩ họ còn sống không?"
+        8. **Câu chốt cuối cùng khớp với kiểu kết đã chọn ở mục 4:**
+           - Nếu bỏ ngỏ: đặt CÂU HỎI cho người xem chọn giả thuyết hoặc đoán kết quả, vd "Bạn
+             nghiêng về giả thuyết nào — tai nạn hay có người thứ ba?".
+           - Nếu đã hé lộ lời giải: chốt bằng câu mời phản ứng/bình luận, vd "Bạn có đoán được
+             không?", "Chi tiết nào khiến bạn bất ngờ nhất?" — không hỏi đoán nữa vì đáp án đã nói.
 
-        Cấu trúc: Thả vào giữa sự việc -> chi tiết lạ tăng dần -> bỏ ngỏ + câu hỏi.
+        Cấu trúc: Thả vào giữa sự việc -> chi tiết lạ tăng dần -> chốt bỏ ngỏ HOẶC hé lộ đáp án thật + câu hỏi/mời phản ứng.
         Quy tắc: văn nói tự nhiên, kể như đang thì thầm với bạn. CHỈ TRẢ VỀ lời thoại thuần —
         KHÔNG nhãn cấu trúc, KHÔNG markdown, KHÔNG mô tả cảnh quay hay timestamp.
         """
@@ -491,7 +494,7 @@ def api_ideas_generate():
             "5. Chọn định dạng phù hợp cho từng ý tưởng: listicle đếm số, trước/sau nhận thức, myth-busting, đếm ngược giữ chân, hoặc khoảnh khắc đồng cảm."
         )
         prompt = f"""Bạn là người tìm đề tài cho kênh TikTok ngách Bí Ẩn & Vụ Án Có Thật tại Việt Nam (kênh faceless, hình dựng bằng AI + giọng đọc AI).
-        Hãy đề xuất 5 ý tưởng video KỂ CHUYỆN, mỗi ý tưởng là một sự việc CÓ THẬT còn bỏ ngỏ.
+        Hãy đề xuất 5 ý tưởng video KỂ CHUYỆN, mỗi ý tưởng là một sự việc CÓ THẬT còn giữ được bí mật tới cuối video.
         Yêu cầu:
         1. Sự việc phải CÓ THẬT và kiểm chứng được (vụ mất tích, hiện tượng chưa lời giải, khảo cổ
            kỳ lạ, tàu/máy bay biến mất, công trình cổ khó lý giải...). KHÔNG bịa vụ án.
@@ -500,8 +503,11 @@ def api_ideas_generate():
            tiết khó hiểu. Đây là thứ tạo tò mò, không phải chủ đề chung chung.
            - SAI (chung chung): "Vụ mất tích bí ẩn ở Nga"
            - ĐÚNG (có chi tiết neo): "9 người leo núi Dyatlov bỏ chạy khỏi lều giữa đêm âm 30 độ, lều bị rạch từ BÊN TRONG"
-        3. Ưu tiên sự việc **chưa có kết luận chính thức** — còn bỏ ngỏ mới kể được thành chuyện.
-           Sự việc đã có đáp án rõ ràng thì hết bí ẩn.
+        3. **Trộn CẢ 2 loại, không chỉ lấy 1 loại:** (a) sự việc CHƯA có kết luận chính thức — còn
+           bỏ ngỏ thật sự, và (b) sự việc ĐÃ có lời giải (kể cả nhiều năm sau) nhưng lời giải đó đủ
+           BẤT NGỜ để làm twist ending — video vẫn giữ bí mật đến câu cuối rồi mới hé lộ. Loại (b)
+           KHÔNG kém hấp dẫn hơn loại (a), chỉ là kể theo cấu trúc khác (xem quy tắc kịch bản mục
+           4). Đừng loại bỏ những vụ hay chỉ vì chúng đã có đáp án.
         4. TRÁNH đề tài máu me/tử thi/bạo lực chi tiết — bị hạn chế phân phối. Ưu tiên cái KHÓ HIỂU
            hơn cái GHÊ RỢN.
         5. Đa dạng: đừng cho cả 5 cùng một loại (đừng 5 vụ mất tích liền). Trộn giữa mất tích,
@@ -612,6 +618,182 @@ def api_scene_prompts_generate():
         for i, (sentence, prompt) in enumerate(zip(sentences, prompts))
     ]
     return jsonify({"scenes": scenes, "recommended_duration_sec": duration_sec})
+
+
+# ============================================================
+# TRỢ LÝ "CLAUDE DESIGN" — nhánh thiết kế TAY, song song với "Hoạt hình Veo thủ công" (Google
+# Flow). Khác biệt cốt lõi: Claude Design tự dựng animation + phụ đề nhưng KHÔNG có giọng đọc
+# riêng, nên app phải sinh sẵn giọng đọc THẬT + mốc thời gian để người dùng đưa vào Claude Design,
+# rồi nhận lại video đã xuất để ghép audio/xuất bản — khác hẳn luồng chính (app tự dựng cả hình
+# lẫn tiếng bằng GSAP/Playwright).
+# ============================================================
+
+CLAUDE_DESIGN_ASSETS_DIR = "temp/claude_design"
+
+
+@app.route("/api/claude-design/prepare", methods=["POST"])
+def api_claude_design_prepare():
+    """Sinh giọng đọc thật + bản 'brief' kèm mốc thời gian từng câu, để dán vào Claude Design.
+    Trả về asset_id — dùng lại ở /api/claude-design/finalize sau khi có video xuất từ Claude Design.
+    """
+    data = request.json or {}
+    script = (data.get("script") or "").strip()
+    voice = data.get("voice", "tiktok_nam_1")
+    rate = data.get("rate", "+0%")
+    if not script:
+        return jsonify({"error": "Thiếu nội dung kịch bản"}), 400
+
+    asset_id = uuid.uuid4().hex[:10]
+    asset_dir = os.path.join(CLAUDE_DESIGN_ASSETS_DIR, asset_id)
+    os.makedirs(asset_dir, exist_ok=True)
+    audio_path = os.path.join(asset_dir, "audio.mp3")
+    srt_path = os.path.join(asset_dir, "subtitles.srt")
+    with open(os.path.join(asset_dir, "script.txt"), "w", encoding="utf-8") as f:
+        f.write(script)
+
+    from core.engines.tts import run_tts, _get_audio_duration
+    try:
+        used_voice = run_tts(raw_text_input=script, output_audio=audio_path, output_srt=srt_path, rate=rate, voice=voice)
+    except Exception as e:
+        return jsonify({"error": f"Lỗi tạo giọng đọc: {str(e)}"}), 500
+
+    duration_sec = _get_audio_duration(audio_path)
+    words_path = srt_path.replace(".srt", "_words.json")
+    try:
+        with open(words_path, "r", encoding="utf-8") as f:
+            words_data = json.load(f)
+    except Exception:
+        words_data = []
+
+    from core.engines.bg_finder import build_sentence_timings_from_words, generate_claude_design_brief
+    sentence_timings = build_sentence_timings_from_words(words_data)
+    brief = generate_claude_design_brief(script, duration_sec, sentence_timings, "audio.mp3")
+
+    return jsonify({
+        "asset_id": asset_id,
+        "audio_url": f"/api/file/{audio_path}",
+        "duration_sec": round(duration_sec, 1),
+        "voice_used": used_voice,
+        "brief": brief,
+    })
+
+
+@app.route("/api/claude-design/finalize", methods=["POST"])
+def api_claude_design_finalize():
+    """Nhận video đã xuất từ Claude Design (multipart, field 'video' + 'asset_id'), ghép giọng đọc
+    thật vào nếu video câm (Claude Design không tự sinh giọng), hoặc giữ nguyên nếu video đã có
+    sẵn audio (người dùng tự nhúng file giọng đọc vào thiết kế) — cộng BGM tuỳ chọn. Đăng ký kết
+    quả thành 1 job hoàn tất để dùng chung UI Preview/Đăng + Publish Kit đã có sẵn cho luồng chính.
+    """
+    import shutil
+
+    asset_id = (request.form.get("asset_id") or "").strip()
+    video_file = request.files.get("video")
+    if not video_file or not asset_id:
+        return jsonify({"error": "Thiếu file video hoặc asset_id"}), 400
+
+    asset_dir = os.path.join(CLAUDE_DESIGN_ASSETS_DIR, asset_id)
+    audio_path = os.path.join(asset_dir, "audio.mp3")
+    srt_path = os.path.join(asset_dir, "subtitles.srt")
+    if not os.path.exists(audio_path):
+        return jsonify({"error": "Không tìm thấy giọng đọc đã chuẩn bị — asset_id sai hoặc đã bị dọn"}), 400
+
+    music_mode = request.form.get("music_mode", "manual")
+    music_file = request.form.get("music_file")
+    music_volume = _parse_music_volume(request.form.get("music_volume"), default=0.22)
+    try:
+        music_offset_sec = _parse_time_offset_to_seconds(request.form.get("music_offset_sec", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Thời gian bắt đầu nhạc không hợp lệ. Dùng mm:ss hoặc hh:mm:ss"}), 400
+
+    job_id = str(uuid.uuid4())
+    create_job(job_id, "processing", "Đang xử lý video từ Claude Design...")
+
+    raw_video_path = os.path.join(asset_dir, "uploaded_from_claude_design.mp4")
+    video_file.save(raw_video_path)
+
+    from core.engines.video_maker import (
+        has_audio_stream, extract_audio_track, mux_video_with_audio,
+        _mix_audio_with_ducking, _mix_audio_simple,
+    )
+    from core.engines.tts import _get_audio_duration
+    from core.engines.html_video_maker import _generate_thumbnail
+
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_file = f"output/claude_design_{timestamp}_{uuid.uuid4().hex[:6]}.mp4"
+    os.makedirs("output", exist_ok=True)
+
+    try:
+        update_job_status(job_id, "processing", 40, "Đang chọn nhạc nền...")
+        bgm_path = None
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        bgm_files = [f for f in os.listdir(MUSIC_DIR) if f.lower().endswith(MUSIC_EXTENSIONS)]
+        if music_mode == "manual" and music_file:
+            candidate = os.path.join(MUSIC_DIR, os.path.basename(str(music_file)))
+            if os.path.exists(candidate):
+                bgm_path = candidate
+        elif music_mode == "ai_local":
+            from core.engines.music_finder import pick_local_music_for_script
+            script_path = os.path.join(asset_dir, "script.txt")
+            script_text = ""
+            if os.path.exists(script_path):
+                with open(script_path, "r", encoding="utf-8") as f:
+                    script_text = f.read()
+            bgm_path = pick_local_music_for_script(script_text, MUSIC_DIR)
+        if bgm_path is None and music_mode == "manual" and bgm_files and not music_file:
+            bgm_path = os.path.join(MUSIC_DIR, random.choice(bgm_files))
+
+        duration_sec = _get_audio_duration(audio_path)
+        video_has_audio = has_audio_stream(raw_video_path)
+
+        update_job_status(job_id, "processing", 60, "Đang ghép âm thanh...")
+        if video_has_audio:
+            # Claude Design đã tự nhúng audio (giọng đọc mình đưa vào lúc thiết kế) -> giữ
+            # nguyên; chỉ mix thêm BGM nếu người dùng có chọn (mix xuống dưới audio có sẵn,
+            # KHÔNG ghi đè mất giọng đọc gốc).
+            if bgm_path:
+                extracted = os.path.join(asset_dir, "extracted_audio.mp3")
+                mixed = os.path.join(asset_dir, "mixed_audio.mp3")
+                if extract_audio_track(raw_video_path, extracted) and _mix_audio_simple(
+                    extracted, bgm_path, mixed, duration_sec, music_offset_sec, music_volume
+                ):
+                    if not mux_video_with_audio(raw_video_path, mixed, output_file):
+                        shutil.copy(raw_video_path, output_file)
+                else:
+                    shutil.copy(raw_video_path, output_file)
+            else:
+                shutil.copy(raw_video_path, output_file)
+        else:
+            # Video câm (Claude Design không tự sinh giọng) -> BẮT BUỘC ghép giọng đọc thật,
+            # kèm BGM (ducking) nếu có chọn, y hệt cách luồng chính đang làm.
+            final_audio = audio_path
+            if bgm_path:
+                ducked = os.path.join(asset_dir, "ducked_audio.mp3")
+                if _mix_audio_with_ducking(audio_path, bgm_path, ducked, duration_sec, music_offset_sec, music_volume):
+                    final_audio = ducked
+                else:
+                    simple = os.path.join(asset_dir, "simple_audio.mp3")
+                    if _mix_audio_simple(audio_path, bgm_path, simple, duration_sec, music_offset_sec, music_volume):
+                        final_audio = simple
+            if not mux_video_with_audio(raw_video_path, final_audio, output_file):
+                raise RuntimeError("Ghép audio vào video thất bại (ffmpeg lỗi) — kiểm tra video tải lên có đúng định dạng MP4/H.264 không.")
+
+        update_job_status(job_id, "processing", 90, "Đang tạo ảnh bìa...")
+        _generate_thumbnail(output_file, srt_path, 1, duration_sec, output_path=output_file, skip_hook_text=False)
+
+        update_job_status(job_id, "completed", 100, "✅ Hoàn tất! (thiết kế từ Claude Design)", output_file=output_file)
+        return jsonify({"success": True, "job_id": job_id, "output_file": output_file})
+
+    except Exception as e:
+        update_job_status(job_id, "failed", 0, f"❌ Lỗi: {str(e)}", error=str(e))
+        return jsonify({"error": str(e)}), 500
+    finally:
+        # Dọn thư mục asset tạm (audio/srt/video thô) — đã ghép xong thành output_file, không
+        # cần giữ lại nữa, tránh tích tụ dần trong temp/.
+        try:
+            shutil.rmtree(asset_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 # Hashtag cố định của ngách — luôn có mặt để thuật toán hiểu đúng ngách kênh.
@@ -913,6 +1095,7 @@ def run_pipeline(
     sub_cfg: SubtitleConfig,
     output_file: str,
     text_only: bool = False,
+    case_file: bool = False,
 ):
     """Tiến trình tạo video chạy nền."""
     update_job_status(job_id, "processing", 10, "Đang tạo giọng đọc...")
@@ -968,10 +1151,11 @@ def run_pipeline(
         if job_id in cancelled_jobs:
             raise Exception("Job cancelled by user")
 
-        # Chế độ chữ động dựng nền bằng gradient nên KHÔNG cần clip nào — bỏ qua kiểm tra này,
-        # nếu không thì bật chế độ đó mà Media Nền trống là bị chặn oan ngay từ đầu.
+        # Chế độ chữ động / bảng hồ sơ dựng nền bằng gradient hoặc đồ hoạ sinh sẵn, KHÔNG cần clip
+        # nào — bỏ qua kiểm tra này, nếu không thì bật 1 trong 2 chế độ mà Media Nền trống là bị
+        # chặn oan ngay từ đầu.
         studio_media = [f for f in os.listdir(image_dir) if f.lower().endswith(STUDIO_EXTENSIONS)]
-        if not studio_media and not text_only:
+        if not studio_media and not text_only and not case_file:
             raise FileNotFoundError(
                 "Chưa có ảnh/video nào trong Media Nền. Dùng trợ lý 'Hoạt hình Veo thủ công' để "
                 "sinh prompt, tạo clip bằng Google Flow rồi upload vào."
@@ -1029,6 +1213,8 @@ def run_pipeline(
             uploaded_images=uploaded_images,
             progress_callback=progress_cb,
             text_only=text_only,
+            case_file=case_file,
+            script_text=script_text,
         )
 
         if job_id in cancelled_jobs:
@@ -1111,7 +1297,10 @@ def api_pipeline_start():
     )
 
     # Chế độ chữ động: nền gradient + chữ to, không cần clip Veo tạo tay.
+    # Chế độ bảng hồ sơ điều tra: đồ hoạ hồ sơ vụ án sinh từ chính kịch bản, cũng không cần clip.
+    # UI chỉ cho chọn 1 trong 2 (radio), nhưng vẫn ưu tiên case_file nếu cả 2 cùng gửi lên.
     text_only = bool(data.get("text_only"))
+    case_file = bool(data.get("case_file"))
 
     job_id = str(uuid.uuid4())
     create_job(job_id, "queued", "Đang chờ...")
@@ -1127,6 +1316,7 @@ def api_pipeline_start():
         sub_cfg,
         output_file,
         text_only,
+        case_file,
     )
 
     return jsonify({"success": True, "job_id": job_id, "message": "Pipeline đã bắt đầu chạy nền!"})
@@ -1191,12 +1381,9 @@ def api_stats():
     total_size = sum(os.path.getsize(f) for f in videos) if videos else 0
 
     ai_data = get_ai_usage()
-    from core.engines.tts import get_fpt_chars_used
     return jsonify({
         "videos_created": len(videos),
         "total_size_mb": round(total_size / 1024 / 1024, 1),
-        "fpt_chars_used": get_fpt_chars_used(),
-        "fpt_chars_limit": 100000,
         "ai_used_today": ai_data["used"],
         "ai_limit": ai_data["limit"]
     })

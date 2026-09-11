@@ -789,3 +789,80 @@ class LazyBackgroundClip:
                 pass
 
 
+# ============================================================
+# TIỆN ÍCH cho nhánh "Trợ lý Claude Design" — Claude Design tự dựng hình + phụ đề nhưng không có
+# giọng đọc riêng, nên video xuất ra từ đó cần ghép audio (giọng đọc thật của app, + BGM nếu có)
+# vào SAU, khác hẳn luồng GSAP/Playwright vốn dựng cả hình lẫn tiếng cùng lúc.
+# ============================================================
+
+def has_audio_stream(path: str) -> bool:
+    """Kiểm tra 1 file video có sẵn track audio hay không (Claude Design có thể tự chèn hoặc
+    không chèn audio khi export, tuỳ người dùng có nhúng thẻ <audio> vào thiết kế hay không)."""
+    import shutil as _shutil
+    ff = _shutil.which("ffprobe")
+    if not ff:
+        try:
+            import imageio_ffmpeg
+            ff = imageio_ffmpeg.get_ffmpeg_exe().replace("ffmpeg", "ffprobe")
+        except Exception:
+            return False
+    try:
+        result = subprocess.run(
+            [ff, "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=15)
+        return bool(result.stdout.strip())
+    except Exception:
+        return False
+
+
+def extract_audio_track(video_path: str, output_audio: str) -> bool:
+    """Tách riêng track audio có sẵn trong video ra file mp3 (dùng khi cần mix thêm BGM dưới
+    audio Claude Design đã nhúng sẵn, thay vì ghi đè mất giọng đọc gốc)."""
+    ff = _resolve_ffmpeg()
+    if not ff:
+        return False
+    try:
+        subprocess.run(
+            [ff, "-y", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "2", output_audio],
+            capture_output=True, timeout=60)
+        return os.path.exists(output_audio) and os.path.getsize(output_audio) > 0
+    except Exception:
+        return False
+
+
+def mux_video_with_audio(video_path: str, audio_path: str, output_path: str) -> bool:
+    """Ghép 1 audio track vào video (copy nguyên video, không re-encode để giữ chất lượng/tốc độ)
+    — dùng khi video Claude Design xuất ra bị câm (không nhúng audio), cần gắn giọng đọc thật vào.
+    `-shortest` để không lệch nếu audio/video chênh vài chục ms."""
+    ff = _resolve_ffmpeg()
+    if not ff:
+        return False
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    try:
+        result = subprocess.run(
+            [ff, "-y", "-i", video_path, "-i", audio_path,
+             "-map", "0:v:0", "-map", "1:a:0",
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", output_path],
+            capture_output=True, timeout=120)
+        return result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0
+    except Exception:
+        return False
+
+
+def _resolve_ffmpeg() -> str:
+    """Tìm đường dẫn ffmpeg khả dụng (hệ thống trước, bundled imageio sau) — dùng chung cho mọi
+    tiện ích mux/extract phía trên, tránh lặp lại logic tìm ffmpeg ở từng hàm."""
+    import shutil as _shutil
+    ff = _shutil.which("ffmpeg")
+    if ff:
+        return ff
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return ""
+
+

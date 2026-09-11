@@ -145,13 +145,20 @@ def make_video_gsap(
     bgm_volume: float = 0.22,
     uploaded_images=None,
     progress_callback=None,
-    text_only: bool = False
+    text_only: bool = False,
+    case_file: bool = False,
+    script_text: str = "",
 ) -> str:
     """Tạo video sử dụng HTML/GSAP và chụp màn hình bằng Playwright, tăng tốc bằng GPU/iGPU.
 
     text_only=True: bỏ hẳn clip nền, dùng nền gradient tự chuyển màu + chữ to giữa khung. Khi đó
     KHÔNG cần tạo clip Veo bằng tay, và cũng bỏ luôn được bước dựng + encode video nền (nhanh hơn
     đáng kể).
+
+    case_file=True: bỏ hẳn clip nền, dựng "bảng hồ sơ điều tra" bằng code (GSAP) — hồ sơ vụ án +
+    ảnh hiện trường + mảnh bản đồ + dòng thời gian, nội dung sinh thật từ `script_text` qua
+    bg_finder.generate_case_file_content(). Cũng KHÔNG cần clip Veo. Nếu cả text_only lẫn
+    case_file cùng True thì case_file được ưu tiên (UI chặn chọn đồng thời, đây chỉ là an toàn).
     """
     logger.info("🚀 Bắt đầu render video bằng động cơ HTML/GSAP + Playwright...")
 
@@ -183,9 +190,17 @@ def make_video_gsap(
                 logger.info("  [GSAP Render] ⚠️ Trộn nhạc nền thất bại. Sử dụng audio gốc.")
                 temp_audio_path = audio_path
 
-    # 3-4. Chuẩn bị nền. Chế độ chữ động bỏ qua hoàn toàn khâu này (không clip, không encode).
+    # 3-4. Chuẩn bị nền. Chế độ chữ động / bảng hồ sơ bỏ qua hoàn toàn khâu này (không clip, không encode).
     temp_bg_path = output_path.replace(".mp4", "_temp_bg.mp4")
-    if text_only:
+    case_file_data = None
+    if case_file:
+        logger.info("  [GSAP Render] Chế độ BẢNG HỒ SƠ ĐIỀU TRA — bỏ qua clip nền, sinh nội dung hồ sơ.")
+        temp_bg_path = None
+        from core.engines.bg_finder import generate_case_file_content
+        case_file_data = generate_case_file_content(script_text)
+        if progress_callback:
+            progress_callback(45, "Bảng hồ sơ điều tra — không cần clip nền.")
+    elif text_only:
         logger.info("  [GSAP Render] Chế độ CHỮ ĐỘNG — bỏ qua clip nền, dùng gradient.")
         temp_bg_path = None
         if progress_callback:
@@ -246,8 +261,10 @@ def make_video_gsap(
         page.goto(file_url)
         
         # Bật chế độ chữ động. setSubtitles bên dưới ghi đè body.className nhưng đã được sửa
-        # để giữ lại class 'text-only', nên gọi trước hay sau đều an toàn.
-        page.evaluate(f"window.setTextOnly({str(bool(text_only)).lower()})")
+        # để giữ lại class 'text-only'/'case-file', nên gọi trước hay sau đều an toàn.
+        # case_file ưu tiên hơn text_only nếu cả 2 cùng bật (không nên xảy ra từ UI).
+        page.evaluate(f"window.setTextOnly({str(bool(text_only) and not case_file).lower()})")
+        page.evaluate(f"window.setCaseFile({json.dumps(case_file_data)}, {duration})")
 
         # Áp dụng subtitles, style và vị trí phụ đề
         page.evaluate(f"window.setSubtitles({json.dumps(subtitles)}, {style}, '{position}')")
@@ -300,7 +317,8 @@ def make_video_gsap(
     # Chế độ chữ động không có file nền tạm -> lấy frame từ chính video thành phẩm (nền gradient
     # trơn nên không sợ chồng chữ như trường hợp nền là clip có phụ đề nung sẵn).
     thumb_source = temp_bg_path if (temp_bg_path and os.path.exists(temp_bg_path)) else output_path
-    thumb = _generate_thumbnail(thumb_source, srt_path, style, duration, output_path=output_path)
+    thumb = _generate_thumbnail(thumb_source, srt_path, style, duration, output_path=output_path,
+                                 skip_hook_text=case_file)
     if thumb:
         logger.info(f"  [Thumbnail] ✅ Đã lưu: {thumb}")
     else:
@@ -327,12 +345,18 @@ def make_video_gsap(
     return output_path
 
 
-def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: float, output_path: str = None):
+def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: float, output_path: str = None,
+                         skip_hook_text: bool = False):
     """Trích 1 frame từ `video_path` (nên là bản nền SẠCH chưa nung phụ đề), phủ chữ hook lên,
     lưu thành `<output_path>_cover.jpg`.
 
     `output_path` là video thành phẩm — dùng để đặt tên file bìa. Tách riêng khỏi `video_path`
     vì frame nguồn lấy từ file nền tạm, không được đặt tên bìa theo file tạm đó.
+
+    skip_hook_text=True: dùng cho chế độ bảng hồ sơ điều tra — bảng đã tự có tiêu đề riêng
+    (case_title) làm điểm nhấn, chữ hook to phủ thêm lên giữa khung sẽ ĐÈ TRỰC TIẾP lên tiêu đề
+    và card bản đồ (cùng nằm giữa khung), rối mắt và khó đọc cả hai. Tái dùng nhánh "không có
+    hook" sẵn có (chỉ lưu frame + gradient, không vẽ chữ) thay vì viết logic riêng.
     """
     try:
         import io
@@ -387,7 +411,7 @@ def _generate_thumbnail(video_path: str, srt_path: str, style: int, duration: fl
 
         # --- 3. Đọc hook text từ SRT (block đầu tiên) ---
         hook = ""
-        if os.path.exists(srt_path):
+        if os.path.exists(srt_path) and not skip_hook_text:
             content = open(srt_path, "r", encoding="utf-8").read()
             m = re.search(
                 r'\d+\s*\n[\d:,]+ --> [\d:,]+\s*\n(.+?)(?:\n\n|\Z)',

@@ -8,7 +8,7 @@ Tài liệu này tổng hợp các quy tắc để hệ thống tạo video TikT
 - **Hai loại video** trên cùng một kênh:
     - **Video sản phẩm (~70%)**: 15–20 giây, cấu trúc Hook nỗi đau (2-3s) → Demo sản phẩm (10-14s) → CTA giỏ hàng (2-3s). Gắn giỏ hàng TikTok Shop.
     - **Video sự thật/tâm lý (~30%)**: 15–25 giây, thuần giá trị, không bán gì, kết bằng kêu gọi lưu video/câu hỏi. Mục đích kéo view + follow.
-- **Giọng đọc**: Ưu tiên **TikTok TTS giọng Việt** (tiktok_nu_1 / tiktok_nam_1) vì tự nhiên, hợp viral — cần `TIKTOK_SESSION_ID` trong `.env`. Dự phòng: FPT banmai (tự nhiên) hoặc Edge (hoaimy/namminh). Tốc độ +20%. Video dùng giọng AI phải **bật nhãn AI-generated content** khi đăng.
+- **Giọng đọc**: Ưu tiên **TikTok TTS giọng Việt** (tiktok_nam_1 mặc định, tiktok_nu_1) vì tự nhiên, hợp viral — cần `TIKTOK_SESSION_ID` trong `.env`, tốc độ đọc cố định. Dự phòng: Edge (hoaimy — miễn phí không giới hạn, không cần cấu hình, nhưng chưa rõ vùng miền). Đã bỏ FPT.AI (free tier hay 429) và giọng Edge namminh (nghe ra âm Nam Bộ). Video dùng giọng AI phải **bật nhãn AI-generated content** khi đăng.
 - **Trung thực**: Chỉ nói công dụng thật của sản phẩm. Phóng đại/bịa tính năng = vi phạm chính sách misleading → đóng băng hoa hồng tới 90 ngày.
 
 ## 2. Hình ảnh (Visuals)

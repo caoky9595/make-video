@@ -86,7 +86,7 @@ def main():
     parser.add_argument("--image-dir", default="uploaded_images", help="Thư mục chứa ảnh/video nền đã upload (vd clip Google Flow)")
     parser.add_argument("--bgm-dir", default="audio_bg")
     parser.add_argument("--rate", default="+0%")
-    parser.add_argument("--voice", default="namminh", help="namminh (Edge, mặc định — miễn phí không giới hạn, không cần cấu hình), leminh (FPT, trầm hơn), tiktok_nu_1/tiktok_nam_1 (cần TIKTOK_SESSION_ID)")
+    parser.add_argument("--voice", default="tiktok_nam_1", help="tiktok_nam_1 (mặc định — cần TIKTOK_SESSION_ID, tốc độ cố định), tiktok_nu_1, hoaimy (Edge, Nữ, miễn phí không giới hạn, không cần cấu hình nhưng chưa rõ vùng miền)")
 
     args = parser.parse_args()
     cmd_create(args)

@@ -5,7 +5,14 @@ export const Editor: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState(0);
   const [pipelineStatus, setPipelineStatus] = useState<any>(null);
-  const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem('editor_voice') || 'namminh');
+  // Đã bỏ FPT (leminh...): free tier liên tục 429 lúc dùng thực tế, không đáng tin cho engine
+  // chính. Đã bỏ namminh (Edge): nghe thử bản render thật ra âm Nam Bộ, không đúng suy đoán ban
+  // đầu. Mặc định giờ là tiktok_nam_1 (cần TIKTOK_SESSION_ID, xem ghi chú dưới select).
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    const saved = localStorage.getItem('editor_voice');
+    const removed = ['namminh', 'leminh', 'giahuy', 'banmai', 'thuminh', 'lannhi', 'linhsan', 'myan'];
+    return saved && !removed.includes(saved) ? saved : 'tiktok_nam_1';
+  });
   const [bgFiles, setBgFiles] = useState<string[]>([]);
   const [musicFiles, setMusicFiles] = useState<string[]>([]);
   const bgInputRef = useRef<HTMLInputElement>(null);
@@ -15,10 +22,25 @@ export const Editor: React.FC = () => {
   const [selectedIdeaId, setSelectedIdeaId] = useState<number | null>(null);
   const [ideaFormat, setIdeaFormat] = useState('');
   const [scriptMode, setScriptMode] = useState(() => localStorage.getItem('editor_script_mode') || 'viral');
-  const [textOnly, setTextOnly] = useState(() => localStorage.getItem('editor_text_only') === '1');
+  // 'media' = clip Flow upload tay (mặc định) | 'text_only' = chữ động, nền gradient | 'case_file'
+  // = bảng hồ sơ điều tra sinh từ kịch bản. 3 lựa chọn loại trừ lẫn nhau (không cần clip Veo ở 2
+  // cái sau). Đọc field cũ 'editor_text_only' để không mất lựa chọn người dùng đã lưu trước đây.
+  const [bgMode, setBgMode] = useState(() => localStorage.getItem('editor_bg_mode') || (localStorage.getItem('editor_text_only') === '1' ? 'text_only' : 'media'));
   const [wordCap, setWordCap] = useState(() => Number(localStorage.getItem('editor_word_cap')) || 75);
   const [ideaBank, setIdeaBank] = useState<any[]>([]);
   const [isSuggesting, setIsSuggesting] = useState(false);
+
+  // Trợ lý "Claude Design" (nhánh thiết kế tay, song song với trợ lý Google Flow) — app sinh
+  // giọng đọc thật + brief kèm mốc thời gian, người dùng tự thiết kế trên Claude Design rồi upload
+  // video đã xuất về đây để ghép tiếng/xuất bản.
+  const [cdAssetId, setCdAssetId] = useState<string | null>(null);
+  const [cdAudioUrl, setCdAudioUrl] = useState<string | null>(null);
+  const [cdDuration, setCdDuration] = useState<number | null>(null);
+  const [cdBrief, setCdBrief] = useState('');
+  const [isCdPreparing, setIsCdPreparing] = useState(false);
+  const [cdVideoFile, setCdVideoFile] = useState<File | null>(null);
+  const [isCdFinalizing, setIsCdFinalizing] = useState(false);
+  const cdVideoInputRef = useRef<HTMLInputElement>(null);
 
   const [scenePrompts, setScenePrompts] = useState<any[]>([]);
   const [isGeneratingScenes, setIsGeneratingScenes] = useState(false);
@@ -106,6 +128,54 @@ export const Editor: React.FC = () => {
       setCopiedSceneIndex(index);
       setTimeout(() => setCopiedSceneIndex(null), 1500);
     });
+  };
+
+  const handleClaudeDesignPrepare = async () => {
+    if (!script.trim()) { alert('Vui lòng nhập/tạo kịch bản trước.'); return; }
+    setIsCdPreparing(true);
+    try {
+      const voice = (document.getElementById('voice_select') as HTMLSelectElement)?.value || selectedVoice;
+      const rate = (document.getElementById('rate_select') as HTMLSelectElement)?.value || '+0%';
+      const res = await fetch('/api/claude-design/prepare', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script, voice, rate })
+      });
+      const data = await res.json();
+      if (data.error) { alert(data.error); return; }
+      setCdAssetId(data.asset_id);
+      setCdAudioUrl(data.audio_url);
+      setCdDuration(data.duration_sec);
+      setCdBrief(data.brief);
+    } catch (e: any) {
+      alert('Lỗi chuẩn bị cho Claude Design: ' + e.message);
+    } finally {
+      setIsCdPreparing(false);
+    }
+  };
+
+  const handleClaudeDesignFinalize = async () => {
+    if (!cdAssetId) { alert('Bấm "Sinh giọng đọc + brief" trước.'); return; }
+    if (!cdVideoFile) { alert('Chọn file video đã xuất từ Claude Design trước.'); return; }
+    setIsCdFinalizing(true);
+    try {
+      const music_mode = (document.getElementById('music_mode_select') as HTMLSelectElement)?.value || 'manual';
+      const music_volume = (document.getElementById('music_volume_select') as HTMLSelectElement)?.value || '0.22';
+      const fd = new FormData();
+      fd.append('video', cdVideoFile);
+      fd.append('asset_id', cdAssetId);
+      fd.append('music_mode', music_mode);
+      fd.append('music_volume', music_volume);
+      const res = await fetch('/api/claude-design/finalize', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) { alert(data.error); return; }
+      // Job đã đăng ký ở backend — mượn luôn cơ chế poll trạng thái đang có sẵn (pipelineStatus)
+      // để hiện tiến trình + kết quả ở Bước 4/5, khỏi phải làm UI theo dõi riêng.
+      setPipelineStatus({ running: true, progress: 60, message: 'Đang ghép tiếng + xuất bản...' });
+    } catch (e: any) {
+      alert('Lỗi xử lý video từ Claude Design: ' + e.message);
+    } finally {
+      setIsCdFinalizing(false);
+    }
   };
 
   const handleGeneratePublishKit = async (scriptText: string) => {
@@ -307,35 +377,26 @@ export const Editor: React.FC = () => {
               <option value="gg_nam_std">Google Standard Nam — 4 triệu ký tự/tháng</option>
               <option value="gg_nu_std">Google Standard Nữ</option>
             </optgroup>
-            <optgroup label="Hợp ngách bí ẩn — trầm, chỉnh được tốc độ">
-              <option value="namminh">⭐ Nam Minh (Edge) — 144Hz, trầm, miễn phí không giới hạn</option>
-              <option value="leminh">Lê Minh (FPT) — 122Hz, trầm nhất (giới hạn 100k ký tự/tháng)</option>
-              <option value="giahuy">Gia Huy (FPT) — Nam Trung Bộ</option>
-            </optgroup>
-            <optgroup label="Giọng TikTok — KHÔNG chỉnh được tốc độ">
-              <option value="tiktok_nam_1">TikTok Nam — 160Hz, cần TIKTOK_SESSION_ID</option>
+            <optgroup label="Giọng TikTok — miễn phí, KHÔNG chỉnh được tốc độ (cần TIKTOK_SESSION_ID)">
+              <option value="tiktok_nam_1">⭐ TikTok Nam — 160Hz, hợp kể chuyện bí ẩn</option>
               <option value="tiktok_nu_1">TikTok Nữ — 262Hz, hợp nội dung nhẹ nhàng hơn</option>
             </optgroup>
-            <optgroup label="Giọng nữ khác">
-              <option value="hoaimy">Hoài My (Edge) — Nữ</option>
-              <option value="banmai">Ban Mai (FPT) — Nữ Bắc trẻ trung</option>
-              <option value="thuminh">Thu Minh (FPT) — Nữ Bắc dịu dàng</option>
-              <option value="lannhi">Lan Nhi (FPT) — Nữ Nam Bộ</option>
-              <option value="linhsan">Linh San (FPT) — Nữ Nam mềm mại</option>
-              <option value="myan">Mỹ An (FPT) — Nữ Trung Bộ</option>
+            <optgroup label="Giọng khác — không cần cấu hình, chưa rõ vùng miền">
+              <option value="hoaimy">Hoài My (Edge) — Nữ, miễn phí không giới hạn</option>
             </optgroup>
           </select>
           {selectedVoice.startsWith('tiktok') && (
             <p style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.4 }}>
-              Giọng TikTok cần <b>TIKTOK_SESSION_ID</b> trong file <code>.env</code>.
-              Đăng nhập tiktok.com trên trình duyệt → mở DevTools → Application → Cookies → copy giá trị <code>sessionid</code>.
+              Giọng TikTok cần <b>TIKTOK_SESSION_ID</b> trong file <code>.env</code>
+              (đăng nhập tiktok.com trên trình duyệt → DevTools → Application → Cookies → copy giá trị <code>sessionid</code>),
+              và đọc tốc độ CỐ ĐỊNH — mục "Tốc độ đọc" bên dưới KHÔNG có tác dụng với giọng này.
             </p>
           )}
           {selectedVoice.startsWith('gg_') && (
             <p style={{ fontSize: '10px', color: '#f59e0b', marginTop: '4px', lineHeight: 1.4 }}>
               ⚠️ Cần <b>GOOGLE_TTS_API_KEY</b> trong <code>.env</code> VÀ project Google Cloud đã <b>xác minh
               billing</b> (thêm thẻ, dù dùng trong hạn miễn phí) — chỉ có key thôi sẽ báo lỗi khi xuất video.
-              Không có sẵn: dùng <b>Nam Minh (Edge)</b> ở nhóm dưới, miễn phí không giới hạn, không cần cấu hình gì thêm.
+              Không có sẵn: dùng <b>TikTok Nam</b> hoặc <b>Hoài My (Edge)</b> ở nhóm dưới, không cần cấu hình gì thêm.
             </p>
           )}
 
@@ -476,9 +537,11 @@ export const Editor: React.FC = () => {
                style={{ flex: '0 0 180px', cursor: 'pointer', accentColor: 'var(--primary)' }}
              />
              <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--primary)', minWidth: '116px' }}>
-               {/* Ước lượng phải khớp TARGET_LO/TARGET_HI ở app.py (0.80-0.95 lần trần), không
-                   lấy thẳng trần — nếu không nhãn sẽ hứa dài hơn video thật khá nhiều. */}
-               {wordCap} từ ≈ {Math.round(wordCap * 0.875 * 5 / 12)}s
+               {/* Ước lượng phải khớp TARGET_LO/TARGET_HI VÀ CHARS_PER_SECOND_ESTIMATE ở app.py/
+                   bg_finder.py (hiện 17 ký tự/giây — đo với giọng mặc định tiktok_nam_1). Đổi
+                   giọng mặc định thì phải sửa cả 3 chỗ (2 chỗ Python + chỗ này) cùng lúc, không
+                   để lệch — đã có lịch sử lỗi kiểu "prompt nói N giây, UI/video ra số khác". */}
+               {wordCap} từ ≈ {Math.round(wordCap * 0.875 * 5 / 17)}s
              </span>
              <span style={{ fontSize: '10px', color: wordCap <= 70 ? '#10b981' : '#f59e0b', lineHeight: 1.4, flex: 1, minWidth: '200px' }}>
                {wordCap <= 70
@@ -561,127 +624,219 @@ export const Editor: React.FC = () => {
 
         </div>
 
-        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: 0 }}>
-          <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#3b82f6' }}>
-            Bước 2 · Trợ lý Hoạt hình Veo (thủ công)
+        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981' }}>
+            Bước 2 · Kiểu nền video
           </h3>
-          <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
-            Sinh sẵn prompt tiếng Anh cho từng cảnh, dán vào Google Flow để tạo video bằng Veo (dùng credit gói Gemini Pro của bạn) —
-            audio bật hay tắt trong Flow đều được, không ảnh hưởng credit (đã kiểm chứng thực tế với cả Omni Flash lẫn Veo 3.1) — app chỉ lấy HÌNH từ clip bạn upload, không dùng tiếng gốc trong clip (âm thanh cuối luôn là giọng TTS + nhạc nền riêng của bạn), nên cứ để tuỳ ý,
-            tải video về, đặt tên file bắt đầu bằng số thứ tự cảnh (vd <code>1_...</code>, <code>2_...</code>), rồi upload vào mục
-            "Media Nền" ngay bên dưới — app tự sắp thứ tự cảnh theo thời gian tải file về máy, sai thì chỉnh bằng mũi tên ↑↓.
-          </p>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              className="glow-btn"
-              style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.4)', color: '#3b82f6', fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
-              onClick={() => window.open('https://flow.google', '_blank')}
-            >
-              <span className="icon" style={{ fontSize: '16px' }}>open_in_new</span>
-              Mở Google Flow
-            </button>
-            <button
-              className="glow-btn"
-              style={{ fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
-              onClick={handleGenerateScenePrompts}
-              disabled={isGeneratingScenes}
-            >
-              {isGeneratingScenes ? <span className="icon animate-spin">sync</span> : <span className="icon">movie_filter</span>}
-              {isGeneratingScenes ? 'Đang sinh...' : 'Sinh prompt từng cảnh'}
-            </button>
-          </div>
 
-          {scenePrompts.length > 0 && (
+          {[
+            { id: 'media', accent: '#10b981', title: 'Media Nền (clip Flow)', desc: 'Dùng clip đã tạo ở Bước 3, cần upload đúng thứ tự cảnh. App tự dựng + đọc tiếng.' },
+            { id: 'text_only', accent: '#a855f7', title: 'Chữ động', desc: 'Nền gradient chuyển màu, chữ to giữa khung. Không cần clip, render ~20 giây.' },
+            { id: 'case_file', accent: '#c9a24b', title: 'Bảng hồ sơ điều tra', desc: 'Hồ sơ vụ án + ảnh hiện trường + bản đồ + dòng thời gian, tự sinh từ kịch bản. Không cần clip.' },
+            { id: 'claude_design', accent: '#f97316', title: 'Thiết kế tay trên Claude Design', desc: 'Mỗi video 1 thiết kế riêng, tự tay làm trên Claude Design — app chỉ lo giọng đọc + ghép/xuất bản.' },
+          ].map(opt => (
+            <label key={opt.id} style={{
+              display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer',
+              padding: '10px 12px', borderRadius: '8px',
+              background: bgMode === opt.id ? `${opt.accent}22` : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${bgMode === opt.id ? `${opt.accent}80` : 'var(--border-subtle)'}`,
+            }}>
+              <input type="radio" name="bg_mode" checked={bgMode === opt.id} style={{ marginTop: '2px', cursor: 'pointer' }}
+                onChange={() => { setBgMode(opt.id); localStorage.setItem('editor_bg_mode', opt.id); }} />
+              <span style={{ fontSize: '11px', lineHeight: 1.5 }}>
+                <b>{opt.title}</b>
+                <span style={{ color: 'var(--text-muted)' }}> — {opt.desc}</span>
+              </span>
+            </label>
+          ))}
+
+          {bgMode === 'media' && (
             <>
-              {recommendedDuration && (
-                <div style={{ padding: '8px 10px', background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px', fontSize: '11px', lineHeight: 1.5 }}>
-                  ⏱️ Mỗi cảnh nên dài <strong>{recommendedDuration} giây</strong> — đã ghép sẵn câu "Video duration: {recommendedDuration} seconds." vào cuối mỗi prompt bên dưới, cứ copy nguyên cả đoạn dán vào Flow là đủ, không cần nói thêm gì nữa.
+              <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+                Upload clip vừa tạo ở Bước 3.
+                Danh sách dưới đây hiển thị <b>đúng thứ tự cảnh sẽ được render</b> — dùng mũi tên ↑↓ để sửa
+                nếu sai.
+              </p>
+
+              {/* Upload background */}
+              <input ref={bgInputRef} type="file" multiple accept=".mp4,.mov,.avi,.mkv,.webm,.jpg,.jpeg,.png,.webp" style={{ display: 'none' }}
+                onChange={e => { if (e.target.files?.length) uploadBg(e.target.files); e.target.value = ''; }} />
+              <button className="glow-btn" style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981', padding: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
+                onClick={() => bgInputRef.current?.click()}>
+                <span className="icon" style={{ fontSize: '16px' }}>upload_file</span>
+                Upload video/ảnh nền
+              </button>
+
+              {bgFiles.length > 0 && (
+                <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {bgFiles.map((name, i) => (
+                    <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px' }}>
+                      <span style={{
+                        flexShrink: 0, width: '18px', height: '18px', borderRadius: '5px',
+                        background: 'rgba(16,185,129,0.2)', color: '#10b981',
+                        fontSize: '10px', fontWeight: 900,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>{i + 1}</span>
+                      <span style={{ fontSize: '11px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                      <button onClick={() => moveBg(i, -1)} disabled={i === 0} title="Lên trước 1 cảnh"
+                        style={{ background: 'none', border: 'none', color: i === 0 ? 'var(--text-muted)' : '#10b981', cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? 0.3 : 1, padding: 0, display: 'flex' }}>
+                        <span className="icon" style={{ fontSize: '15px' }}>arrow_upward</span>
+                      </button>
+                      <button onClick={() => moveBg(i, 1)} disabled={i === bgFiles.length - 1} title="Lùi sau 1 cảnh"
+                        style={{ background: 'none', border: 'none', color: i === bgFiles.length - 1 ? 'var(--text-muted)' : '#10b981', cursor: i === bgFiles.length - 1 ? 'default' : 'pointer', opacity: i === bgFiles.length - 1 ? 0.3 : 1, padding: 0, display: 'flex' }}>
+                        <span className="icon" style={{ fontSize: '15px' }}>arrow_downward</span>
+                      </button>
+                      <button onClick={() => deleteBg(name)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px', display: 'flex' }}>
+                        <span className="icon" style={{ fontSize: '14px' }}>close</span>
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
-              <div style={{ maxHeight: '260px', overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0 }}>
-              {scenePrompts.map((scene) => (
-                <div key={scene.index} style={{ padding: '8px 10px', background: 'rgba(59,130,246,0.08)', borderRadius: '8px', minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#3b82f6' }}>
-                      CẢNH {scene.index} — tên file gợi ý: {scene.index}_canh.mp4
-                    </span>
-                    <button
-                      onClick={() => handleCopyScenePrompt(scene.index, scene.prompt)}
-                      style={{ background: 'none', border: '1px solid rgba(59,130,246,0.4)', color: '#3b82f6', cursor: 'pointer', padding: '2px 8px', borderRadius: '6px', fontSize: '10px', flexShrink: 0 }}
-                    >
-                      {copiedSceneIndex === scene.index ? '✅ Đã copy' : '📋 Copy'}
-                    </button>
-                  </div>
-                  <p style={{
-                    fontSize: '12px', margin: 0, lineHeight: 1.4, color: 'var(--text-primary, #eee)',
-                    display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                  }}>
-                    {scene.prompt}
-                  </p>
-                </div>
-              ))}
-              </div>
+            </>
+          )}
+
+          {bgMode === 'claude_design' && (
+            <>
+              <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+                Làm xong ở Bước 3 (sinh giọng đọc + thiết kế trên Claude Design), export MP4 rồi upload lại đây.
+                App sẽ tự ghép giọng đọc thật vào nếu video câm, hoặc giữ nguyên tiếng nếu bạn đã tự nhúng
+                file audio vào lúc thiết kế.
+              </p>
+              <input ref={cdVideoInputRef} type="file" accept=".mp4,.mov,.webm" style={{ display: 'none' }}
+                onChange={e => setCdVideoFile(e.target.files?.[0] || null)} />
+              <button className="glow-btn" style={{ background: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.4)', color: '#f97316', padding: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
+                onClick={() => cdVideoInputRef.current?.click()}>
+                <span className="icon" style={{ fontSize: '16px' }}>upload_file</span>
+                {cdVideoFile ? cdVideoFile.name : 'Chọn video đã xuất từ Claude Design'}
+              </button>
+              <button className="glow-btn" style={{ fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}
+                onClick={handleClaudeDesignFinalize} disabled={isCdFinalizing || !cdVideoFile || !cdAssetId}>
+                {isCdFinalizing ? <span className="icon animate-spin">sync</span> : <span className="icon">movie_filter</span>}
+                {isCdFinalizing ? 'Đang xử lý...' : 'Ghép tiếng + hoàn tất video'}
+              </button>
+              {!cdAssetId && (
+                <p style={{ fontSize: '10px', color: '#f59e0b', margin: 0 }}>
+                  ⚠️ Chưa sinh giọng đọc — làm Bước 3 trước khi upload video.
+                </p>
+              )}
             </>
           )}
         </div>
 
-        <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#10b981' }}>
-            Bước 3 · Media Nền — thứ tự cảnh
-          </h3>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer',
-                          padding: '10px 12px', borderRadius: '8px',
-                          background: textOnly ? 'rgba(168,85,247,0.14)' : 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${textOnly ? 'rgba(168,85,247,0.5)' : 'var(--border-subtle)'}` }}>
-            <input type="checkbox" checked={textOnly} style={{ marginTop: '2px', cursor: 'pointer' }}
-              onChange={(e) => { setTextOnly(e.target.checked); localStorage.setItem('editor_text_only', e.target.checked ? '1' : '0'); }} />
-            <span style={{ fontSize: '11px', lineHeight: 1.5 }}>
-              <b>Chế độ chữ động</b> — nền gradient chuyển màu, chữ to giữa khung.
-              <span style={{ color: 'var(--text-muted)' }}> Không cần tạo clip Veo, bỏ qua toàn bộ Bước 2 và phần upload bên dưới. Render ~20 giây.</span>
-            </span>
-          </label>
-          <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
-            Upload clip vừa tạo ở Bước 2.
-            Danh sách dưới đây hiển thị <b>đúng thứ tự cảnh sẽ được render</b> — dùng mũi tên ↑↓ để sửa
-            nếu sai.
-          </p>
-
-          {/* Upload background */}
-          <input ref={bgInputRef} type="file" multiple accept=".mp4,.mov,.avi,.mkv,.webm,.jpg,.jpeg,.png,.webp" style={{ display: 'none' }}
-            onChange={e => { if (e.target.files?.length) uploadBg(e.target.files); e.target.value = ''; }} />
-          <button className="glow-btn" style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981', padding: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center' }}
-            onClick={() => bgInputRef.current?.click()}>
-            <span className="icon" style={{ fontSize: '16px' }}>upload_file</span>
-            Upload video/ảnh nền
-          </button>
-
-          {bgFiles.length > 0 && (
-            <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {bgFiles.map((name, i) => (
-                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px' }}>
-                  <span style={{
-                    flexShrink: 0, width: '18px', height: '18px', borderRadius: '5px',
-                    background: 'rgba(16,185,129,0.2)', color: '#10b981',
-                    fontSize: '10px', fontWeight: 900,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }}>{i + 1}</span>
-                  <span style={{ fontSize: '11px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                  <button onClick={() => moveBg(i, -1)} disabled={i === 0} title="Lên trước 1 cảnh"
-                    style={{ background: 'none', border: 'none', color: i === 0 ? 'var(--text-muted)' : '#10b981', cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? 0.3 : 1, padding: 0, display: 'flex' }}>
-                    <span className="icon" style={{ fontSize: '15px' }}>arrow_upward</span>
+        {(bgMode === 'media' || bgMode === 'claude_design') && (
+          <div className="glass-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: 0 }}>
+            {bgMode === 'media' ? (
+              <>
+                <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#3b82f6' }}>
+                  Bước 3 · Trợ lý Hoạt hình Veo (thủ công)
+                </h3>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+                  Sinh sẵn prompt tiếng Anh cho từng cảnh, dán vào Google Flow để tạo video bằng Veo (dùng credit gói Gemini Pro của bạn) —
+                  audio bật hay tắt trong Flow đều được, không ảnh hưởng credit (đã kiểm chứng thực tế với cả Omni Flash lẫn Veo 3.1) — app chỉ lấy HÌNH từ clip bạn upload, không dùng tiếng gốc trong clip (âm thanh cuối luôn là giọng TTS + nhạc nền riêng của bạn), nên cứ để tuỳ ý,
+                  tải video về, đặt tên file bắt đầu bằng số thứ tự cảnh (vd <code>1_...</code>, <code>2_...</code>), rồi upload vào mục
+                  "Media Nền" ở Bước 2 — app tự sắp thứ tự cảnh theo thời gian tải file về máy, sai thì chỉnh bằng mũi tên ↑↓.
+                </p>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    className="glow-btn"
+                    style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.4)', color: '#3b82f6', fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    onClick={() => window.open('https://flow.google', '_blank')}
+                  >
+                    <span className="icon" style={{ fontSize: '16px' }}>open_in_new</span>
+                    Mở Google Flow
                   </button>
-                  <button onClick={() => moveBg(i, 1)} disabled={i === bgFiles.length - 1} title="Lùi sau 1 cảnh"
-                    style={{ background: 'none', border: 'none', color: i === bgFiles.length - 1 ? 'var(--text-muted)' : '#10b981', cursor: i === bgFiles.length - 1 ? 'default' : 'pointer', opacity: i === bgFiles.length - 1 ? 0.3 : 1, padding: 0, display: 'flex' }}>
-                    <span className="icon" style={{ fontSize: '15px' }}>arrow_downward</span>
-                  </button>
-                  <button onClick={() => deleteBg(name)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px', display: 'flex' }}>
-                    <span className="icon" style={{ fontSize: '14px' }}>close</span>
+                  <button
+                    className="glow-btn"
+                    style={{ fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    onClick={handleGenerateScenePrompts}
+                    disabled={isGeneratingScenes}
+                  >
+                    {isGeneratingScenes ? <span className="icon animate-spin">sync</span> : <span className="icon">movie_filter</span>}
+                    {isGeneratingScenes ? 'Đang sinh...' : 'Sinh prompt từng cảnh'}
                   </button>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+
+                {scenePrompts.length > 0 && (
+                  <>
+                    {recommendedDuration && (
+                      <div style={{ padding: '8px 10px', background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px', fontSize: '11px', lineHeight: 1.5 }}>
+                        ⏱️ Mỗi cảnh nên dài <strong>{recommendedDuration} giây</strong> — đã ghép sẵn câu "Video duration: {recommendedDuration} seconds." vào cuối mỗi prompt bên dưới, cứ copy nguyên cả đoạn dán vào Flow là đủ, không cần nói thêm gì nữa.
+                      </div>
+                    )}
+                    <div style={{ maxHeight: '260px', overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0 }}>
+                    {scenePrompts.map((scene) => (
+                      <div key={scene.index} style={{ padding: '8px 10px', background: 'rgba(59,130,246,0.08)', borderRadius: '8px', minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '10px', fontWeight: 800, color: '#3b82f6' }}>
+                            CẢNH {scene.index} — tên file gợi ý: {scene.index}_canh.mp4
+                          </span>
+                          <button
+                            onClick={() => handleCopyScenePrompt(scene.index, scene.prompt)}
+                            style={{ background: 'none', border: '1px solid rgba(59,130,246,0.4)', color: '#3b82f6', cursor: 'pointer', padding: '2px 8px', borderRadius: '6px', fontSize: '10px', flexShrink: 0 }}
+                          >
+                            {copiedSceneIndex === scene.index ? '✅ Đã copy' : '📋 Copy'}
+                          </button>
+                        </div>
+                        <p style={{
+                          fontSize: '12px', margin: 0, lineHeight: 1.4, color: 'var(--text-primary, #eee)',
+                          display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                        }}>
+                          {scene.prompt}
+                        </p>
+                      </div>
+                    ))}
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <h3 style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#f97316' }}>
+                  Bước 3 · Trợ lý Claude Design
+                </h3>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+                  Sinh giọng đọc thật (theo giọng/tốc độ đã chọn ở cột trái) + 1 bản "brief" kèm mốc thời gian
+                  từng câu — dán brief này vào Claude Design, đính kèm file audio tải về, để nó tự thiết kế
+                  animation khớp đúng giọng đọc thay vì tự bịa giọng khác.
+                </p>
+                <button
+                  className="glow-btn"
+                  style={{ fontSize: '12px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}
+                  onClick={handleClaudeDesignPrepare}
+                  disabled={isCdPreparing}
+                >
+                  {isCdPreparing ? <span className="icon animate-spin">sync</span> : <span className="icon">graphic_eq</span>}
+                  {isCdPreparing ? 'Đang sinh...' : 'Sinh giọng đọc + brief'}
+                </button>
+
+                {cdAssetId && (
+                  <>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <a href={cdAudioUrl || '#'} download
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px', borderRadius: '8px', background: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.4)', color: '#f97316', textDecoration: 'none', fontSize: '12px', fontWeight: 700 }}>
+                        <span className="icon" style={{ fontSize: '16px' }}>download</span>
+                        Tải audio ({cdDuration}s)
+                      </a>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(cdBrief).then(() => showToast('✅ Đã copy brief'))}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '8px', borderRadius: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}>
+                        <span className="icon" style={{ fontSize: '16px' }}>content_copy</span>
+                        Copy brief
+                      </button>
+                    </div>
+                    <a href="https://claude.ai/design" target="_blank" rel="noopener noreferrer"
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 12px', borderRadius: '8px', background: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.3)', color: '#f97316', textDecoration: 'none', fontSize: '12px', fontWeight: 800 }}>
+                      <span className="icon" style={{ fontSize: '16px' }}>open_in_new</span>
+                      Mở Claude Design
+                    </a>
+                    <textarea readOnly value={cdBrief} style={{ width: '100%', minHeight: '140px', fontSize: '11px', lineHeight: 1.5, background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '10px', color: 'var(--text-muted)', resize: 'vertical' }} />
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Cột 3: Bước 4 -> 5 — xuất video rồi đăng */}
@@ -852,7 +1007,8 @@ export const Editor: React.FC = () => {
                       position,
                       music_mode,
                       music_volume,
-                      text_only: textOnly
+                      text_only: bgMode === 'text_only',
+                      case_file: bgMode === 'case_file'
                     })
                   }).then(() => {
                     setPipelineStatus({ running: true, progress: 0, message: "Bắt đầu tiến trình..." });

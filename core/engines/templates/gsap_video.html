@@ -50,6 +50,133 @@
        (đã gặp: "LỰCTHAY"). Nới cả hai theo cỡ chữ mới. */
     body.text-only .segment { font-size: 104px !important; line-height: 1.18; gap: 26px; }
     body.text-only .word-container .word { margin: 0 10px; }
+
+    /* ============================================================
+       CHẾ ĐỘ "BẢNG HỒ SƠ ĐIỀU TRA" (case-file) — thay clip Flow bằng đồ hoạ dựng bằng code.
+       Bật bằng class `case-file` trên <body>. QUAN TRỌNG: mọi hiệu ứng ở đây PHẢI được điều khiển
+       bằng GSAP timeline seek theo `t` trong window.seekTo (biến `caseTl`), TUYỆT ĐỐI KHÔNG dùng
+       CSS @keyframes/animation cho bất kỳ thứ gì cần đồng bộ — Playwright chụp từng frame rời rạc
+       bằng cách gọi seekTo(t) rồi screenshot, không phải để thời gian thực trôi liên tục, nên
+       animation chạy theo đồng hồ hệ thống (CSS animation-duration) sẽ ra kết quả SAI/đứng hình so
+       với tiến độ audio thật — đúng lỗi đã gặp và phải sửa thủ công cho #bg-gradient phía trên.
+       ============================================================ */
+    #case-file { display: none; position: absolute; inset: 0; z-index: 1; overflow: hidden; }
+    body.case-file #case-file { display: block; }
+    body.case-file #background-video, body.case-file #bg-gradient { display: none; }
+
+    .cf-board {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(120% 90% at 22% 10%, rgba(201,162,75,0.16), transparent 55%),
+        linear-gradient(160deg, #171310 0%, #100d0a 65%, #0b0908 100%);
+    }
+    .cf-lamp {
+      position: absolute; inset: 0;
+      background: radial-gradient(38% 24% at 20% 7%, rgba(255,224,150,0.20), transparent 70%);
+    }
+    .cf-thread { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .cf-thread-path {
+      fill: none; stroke: #a8402f; stroke-width: 4; stroke-linecap: round;
+      filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5));
+      stroke-dasharray: 900; stroke-dashoffset: 900; /* GSAP tween strokeDashoffset -> 0 */
+    }
+    .cf-pin {
+      position: absolute; width: 20px; height: 20px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #e7c98a, #c9a24b 60%, #8a6a2a 100%);
+      box-shadow: 0 3px 5px rgba(0,0,0,0.6); opacity: 0; /* GSAP fade-in */
+    }
+    .cf-pin-1 { top: 21%; left: 24%; } .cf-pin-2 { top: 46%; left: 15%; } .cf-pin-3 { top: 60%; left: 66%; }
+
+    .cf-photo {
+      position: absolute; top: 8%; right: 9%; width: 240px;
+      background: #efe7d3; padding: 10px 10px 34px;
+      box-shadow: 0 16px 32px rgba(0,0,0,0.5);
+      transform: rotate(4deg); opacity: 0; /* GSAP fade+slide in */
+    }
+    .cf-photo-img {
+      aspect-ratio: 4/5; border-radius: 2px;
+      background:
+        radial-gradient(18% 22% at 78% 30%, #e8c878, transparent 60%),
+        linear-gradient(180deg, #1c2e29 0%, #12201d 55%, #060a09 100%);
+      position: relative; overflow: hidden;
+    }
+    .cf-photo-img::before, .cf-photo-img::after {
+      content: ""; position: absolute; bottom: 0; width: 4px; background: #05100c;
+    }
+    .cf-photo-img::before { left: 30%; height: 62%; } .cf-photo-img::after { left: 46%; height: 78%; }
+    .cf-photo-cap {
+      font-family: 'Oswald', sans-serif; font-size: 15px; letter-spacing: 0.08em;
+      color: #5c5044; text-align: center; padding-top: 10px; text-transform: uppercase;
+    }
+
+    .cf-map {
+      position: absolute; bottom: 20%; left: 8%; width: 280px;
+      background: #e4dabd; padding: 16px 16px 12px;
+      box-shadow: 0 16px 30px rgba(0,0,0,0.5);
+      transform: rotate(-3deg); opacity: 0; /* GSAP fade+slide in */
+    }
+    .cf-map-lines {
+      aspect-ratio: 5/4; position: relative; overflow: hidden;
+      background:
+        repeating-linear-gradient(100deg, transparent 0 14px, rgba(90,74,48,0.35) 14px 15px),
+        repeating-linear-gradient(10deg, transparent 0 18px, rgba(90,74,48,0.25) 18px 19px);
+    }
+    .cf-map-pin { position: absolute; top: 38%; left: 58%; }
+    .cf-ping {
+      position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+      border-radius: 50%; background: #a8402f; opacity: 0; /* GSAP repeat:-1 scale+fade tween */
+    }
+    .cf-map-cap {
+      font-family: 'Oswald', sans-serif; font-size: 14px; letter-spacing: 0.07em;
+      color: #5c5044; text-transform: uppercase; padding-top: 8px; text-align: center;
+    }
+
+    .cf-file {
+      position: absolute; left: 50%; top: 38%; width: 74%; max-width: 720px;
+      transform: translate(-50%, -46%) rotate(-1.2deg);
+      background: #ece4d0; color: #2a2420;
+      padding: 34px 32px 28px; border-radius: 2px;
+      box-shadow: 0 26px 48px rgba(0,0,0,0.55), 0 0 0 1px #d9cfb4;
+      opacity: 0; /* GSAP fade+slide in */
+    }
+    .cf-stamp {
+      display: inline-block; font-family: 'Oswald', sans-serif; font-size: 16px; font-weight: 700;
+      letter-spacing: 0.14em; color: #a8402f; border: 2px solid #a8402f;
+      padding: 4px 12px; transform: rotate(-3deg); margin-bottom: 16px;
+    }
+    .cf-title {
+      font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 34px;
+      letter-spacing: 0.03em; text-transform: uppercase; margin: 0 0 6px;
+    }
+    .cf-status { font-family: 'Oswald', sans-serif; font-size: 17px; letter-spacing: 0.1em; color: #5c5044; margin: 0 0 20px; }
+    /* #cf-notes chồng nhiều .cf-beat lên nhau (position:absolute) để GSAP crossfade giữa các mốc
+       tình tiết — min-height giữ chỗ cho 2 dòng, tránh card đổi cỡ giật khi đổi beat. */
+    #cf-notes { position: relative; min-height: 92px; }
+    .cf-beat { position: absolute; inset: 0 0 auto 0; opacity: 0; /* GSAP crossfade theo t */ }
+    .cf-note { font-family: 'Special Elite', 'Courier New', monospace; font-size: 20px; line-height: 1.8; margin: 0 0 10px; }
+    .cf-note:last-child { margin-bottom: 0; }
+    .cf-redact {
+      display: inline-block; background: #0f0d0a; color: transparent; border-radius: 2px;
+      padding: 0 4px; user-select: none;
+    }
+
+    .cf-timeline {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+      padding: 22px 34px 26px;
+      background: linear-gradient(0deg, rgba(6,5,4,0.9), transparent);
+      display: flex; align-items: flex-start; gap: 0;
+    }
+    .cf-tl-item { display: flex; flex-direction: column; align-items: center; flex: 1; opacity: 0; /* GSAP fade-in */ }
+    .cf-tl-dot { width: 14px; height: 14px; border-radius: 50%; background: #d8cdb0; box-shadow: 0 0 0 4px rgba(6,5,4,0.9); margin-bottom: 8px; }
+    .cf-tl-time { font-family: 'Oswald', sans-serif; font-size: 15px; letter-spacing: 0.06em; color: #cbbfa4; }
+    .cf-tl-item.cf-tl-open .cf-tl-time { color: #a8402f; }
+
+    .cf-grain {
+      position: absolute; inset: -20%; z-index: 3; pointer-events: none; opacity: 0.14; mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      /* backgroundPosition được set thủ công theo `t` trong seekTo, KHÔNG dùng CSS animation. */
+    }
+    body.case-file #overlay { background: rgba(0, 0, 0, 0.22); }
     /* Lớp phủ tối để chữ nổi. Hạ từ 0.4 xuống 0.15: đo thực tế clip Veo gốc sáng 124-138/255
        nhưng video xuất ra chỉ còn 81/255 — tối đi ~40%, tranh anime sáng đẹp bị dìm thành xám
        xịt đúng lúc cần bắt mắt nhất trên feed. Phụ đề vẫn đọc rõ vì đã có viền đen 6px
@@ -156,13 +283,47 @@
       text-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
   </style>
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@900&family=Inter:wght@700;900&family=Lora:ital,wght@1,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@900&family=Inter:wght@700;900&family=Lora:ital,wght@1,600&family=Oswald:wght@400;600;700&family=Special+Elite&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 </head>
 <body class="style-mrbeast">
   <div id="container">
     <div id="bg-gradient"></div>
     <video id="background-video" src="" muted loop></video>
+
+    <div id="case-file">
+      <div class="cf-board">
+        <div class="cf-lamp"></div>
+        <svg class="cf-thread" viewBox="0 0 400 711" preserveAspectRatio="none">
+          <path class="cf-thread-path" d="M110,230 C190,300 260,360 175,480 C140,540 260,590 320,545" />
+        </svg>
+        <span class="cf-pin cf-pin-1"></span>
+        <span class="cf-pin cf-pin-2"></span>
+        <span class="cf-pin cf-pin-3"></span>
+
+        <div class="cf-photo">
+          <div class="cf-photo-img"></div>
+          <div class="cf-photo-cap" id="cf-photo-cap"></div>
+        </div>
+
+        <div class="cf-map">
+          <div class="cf-map-lines">
+            <span class="cf-map-pin"><span class="cf-ping"></span></span>
+          </div>
+          <div class="cf-map-cap" id="cf-map-cap"></div>
+        </div>
+
+        <div class="cf-file">
+          <span class="cf-stamp" id="cf-stamp"></span>
+          <h2 class="cf-title" id="cf-title"></h2>
+          <p class="cf-status" id="cf-status"></p>
+          <div id="cf-notes"></div>
+        </div>
+      </div>
+      <div class="cf-timeline" id="cf-timeline"></div>
+      <div class="cf-grain"></div>
+    </div>
+
     <div id="overlay"></div>
     <div id="subtitles">
       <div class="word-container" id="word-container"></div>
@@ -171,6 +332,7 @@
   <script>
     let subtitles = [];
     let tl = null;
+    let caseTl = null;
 
     const styleMap = {
       1: 'style-mrbeast',
@@ -196,8 +358,10 @@
       // không hiện, chữ tụt về cỡ phụ đề). `!important` trong CSS không cứu được vì bản thân
       // class đã bị xoá khỏi body.
       const keepTextOnly = document.body.classList.contains('text-only');
+      const keepCaseFile = document.body.classList.contains('case-file');
       document.body.className = styleMap[styleId] || 'style-mrbeast';
       if (keepTextOnly) document.body.classList.add('text-only');
+      if (keepCaseFile) document.body.classList.add('case-file');
 
       // Áp dụng vị trí phụ đề
       const subEl = document.getElementById("subtitles");
@@ -302,9 +466,140 @@
       document.body.classList.toggle("text-only", !!on);
     };
 
+    // Bật chế độ "bảng hồ sơ điều tra": data = nội dung thật sinh từ script (bg_finder.py::
+    // generate_case_file_content), duration = độ dài audio thật (giây) — MỌI mốc thời gian trong
+    // timeline dựng dưới đây tính theo TỈ LỆ của duration này, không cố định số giây, để hợp với
+    // kịch bản ngắn/dài khác nhau. data falsy -> tắt chế độ, dọn timeline cũ.
+    window.setCaseFile = function(data, duration) {
+      document.body.classList.toggle("case-file", !!data);
+      if (caseTl) { caseTl.kill(); caseTl = null; }
+      if (!data) return;
+
+      document.getElementById("cf-stamp").innerText = "CASE #" + (data.case_number || "01");
+      document.getElementById("cf-title").innerText = data.case_title || "HỒ SƠ VỤ ÁN";
+      document.getElementById("cf-status").innerText = "— " + (data.status_label || "CHƯA CÓ LỜI GIẢI") + " —";
+      document.getElementById("cf-photo-cap").innerText = data.photo_caption || "HIỆN TRƯỜNG";
+      document.getElementById("cf-map-cap").innerText = data.map_caption || "VỊ TRÍ CUỐI CÙNG";
+
+      // beats: NHIỀU mốc tình tiết (thay vì 1 note_lines tĩnh) — mỗi beat là 1 div riêng, GSAP
+      // crossfade lần lượt theo tiến độ video để bảng cảm giác đang được "bổ sung ghi chú mới"
+      // liên tục thay vì đứng yên từ đầu tới cuối. Mỗi dòng có thể chứa [[cụm cần redact]] ->
+      // luôn hiện thành vệt đen (không bao giờ hiện chữ thật) — đúng kiểu tài liệu đã bị kiểm
+      // duyệt, không phải hiệu ứng che-dần.
+      const notesEl = document.getElementById("cf-notes");
+      notesEl.innerHTML = "";
+      const beats = (Array.isArray(data.beats) && data.beats.length > 0)
+        ? data.beats
+        : [{ note_lines: data.note_lines || ["Hồ sơ đang được cập nhật."] }];
+      beats.forEach((beat, bi) => {
+        const beatDiv = document.createElement("div");
+        beatDiv.className = "cf-beat";
+        beatDiv.id = "cf-beat-" + bi;
+        (beat.note_lines || []).forEach(line => {
+          const p = document.createElement("p");
+          p.className = "cf-note";
+          String(line).split(/(\[\[[^\]]*\]\])/g).forEach(part => {
+            const m = part.match(/^\[\[([^\]]*)\]\]$/);
+            if (m) {
+              const span = document.createElement("span");
+              span.className = "cf-redact";
+              span.innerText = m[1] || "    ";
+              p.appendChild(span);
+            } else if (part) {
+              p.appendChild(document.createTextNode(part));
+            }
+          });
+          beatDiv.appendChild(p);
+        });
+        notesEl.appendChild(beatDiv);
+      });
+
+      // Dòng thời gian: mốc cuối cùng luôn coi là "còn bỏ ngỏ" (nhấn màu đỏ).
+      const tlEl = document.getElementById("cf-timeline");
+      tlEl.innerHTML = "";
+      const times = (data.timeline && data.timeline.length >= 2) ? data.timeline : ["21:40", "22:40", "23:15", "??:??"];
+      times.forEach((t, i) => {
+        const item = document.createElement("div");
+        item.className = "cf-tl-item" + (i === times.length - 1 ? " cf-tl-open" : "");
+        item.id = "cf-tl-" + i;
+        item.innerHTML = '<span class="cf-tl-dot"></span><span class="cf-tl-time"></span>';
+        item.querySelector(".cf-tl-time").innerText = t;
+        tlEl.appendChild(item);
+      });
+
+      // GSAP timeline riêng cho bảng, tách khỏi `tl` (phụ đề) — seek độc lập trong seekTo() bên
+      // dưới. Mọi tween seek theo đúng thời điểm t, kể cả tween repeat:-1 (ping/đèn), nên AN TOÀN
+      // dưới chụp frame rời rạc — khác hẳn CSS animation chạy theo đồng hồ hệ thống.
+      const D = Math.max(1, duration || 20);
+      caseTl = gsap.timeline({ paused: true });
+      caseTl.fromTo(".cf-file", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: D * 0.04, ease: "power2.out" }, D * 0.02);
+      caseTl.fromTo(".cf-photo", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: D * 0.04, ease: "power2.out" }, D * 0.08);
+      caseTl.fromTo(".cf-map", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: D * 0.04, ease: "power2.out" }, D * 0.12);
+      caseTl.fromTo(".cf-thread-path", { strokeDashoffset: 900 }, { strokeDashoffset: 0, duration: D * 0.14, ease: "power1.inOut" }, D * 0.14);
+      caseTl.fromTo(".cf-ping", { opacity: 0.6, scale: 0.6 }, { opacity: 0, scale: 2.4, duration: 2.2, repeat: -1, ease: "power1.out" }, D * 0.16);
+      caseTl.to(".cf-lamp", { opacity: 0.82, duration: 3.4, repeat: -1, yoyo: true, ease: "sine.inOut" }, 0);
+
+      // Beat i hiện từ lúc board "đã dựng xong" (D*0.05) tới gần cuối video (D*0.9), chia đều
+      // theo số beat — mỗi lần đổi beat: crossfade nội dung + 1 pin ghim thêm (tối đa 3 pin vật
+      // lý sẵn có) + flash viền đỏ ngắn trên file-card + ĐỔI KHUNG HÌNH "camera" (xem bên dưới).
+      const pins = [".cf-pin-1", ".cf-pin-2", ".cf-pin-3"];
+      const beatStart = D * 0.05, beatEnd = D * 0.9;
+      const beatDur = Math.max(1.2, (beatEnd - beatStart) / beats.length);
+      const crossfade = Math.min(0.5, beatDur * 0.2);
+
+      // "Camera" — zoom .cf-board vào từng vùng khác nhau mỗi beat (transform-origin = điểm zoom
+      // vào, % theo đúng vị trí CSS của từng khối: file-card ~50/38%, photo ~80/16%, map
+      // ~22/68%). KHÔNG CÓ cái này thì cả video chỉ là 1 khung hình đứng yên, chỉ chữ trong thẻ
+      // đổi — đúng góp ý đã nhận: "chỉ 1 màn hình, không sinh màn mới". Bắt chước cách phim tài
+      // liệu thật cắt cảnh giữa cận cảnh hồ sơ/ảnh/bản đồ thay vì đứng yên 1 góc. Luôn MỞ ĐẦU và
+      // CHỐT bằng toàn cảnh (scale 1.0) — mở để giới thiệu bối cảnh, chốt để "lùi ra" cho thấy cả
+      // bảng đã đầy chứng cứ, đúng nhịp cao trào của video kể chuyện.
+      const wideShot = { origin: "50% 46%", scale: 1.0 };
+      // Biên độ zoom PHẢI đủ mạnh mới đọc được là "cắt cảnh" — thử 1.28-1.32 trước đó nhìn vẫn
+      // giống 1 khung đứng yên hơi lệch, không rõ là màn mới. 1.55-1.65 mới thấy rõ khác biệt.
+      const zoomShots = [
+        { origin: "50% 38%", scale: 1.6 },   // cận cảnh hồ sơ chính
+        { origin: "80% 16%", scale: 1.65 },  // cận cảnh ảnh hiện trường
+        { origin: "22% 68%", scale: 1.6 },   // cận cảnh bản đồ
+      ];
+
+      beats.forEach((beat, bi) => {
+        const start = beatStart + bi * beatDur;
+        const end = (bi === beats.length - 1) ? D : (beatStart + (bi + 1) * beatDur);
+        caseTl.set("#cf-beat-" + bi, { opacity: 0 }, 0);
+        caseTl.to("#cf-beat-" + bi, { opacity: 1, duration: crossfade }, start);
+        if (bi < beats.length - 1) {
+          caseTl.to("#cf-beat-" + bi, { opacity: 0, duration: crossfade }, end - crossfade);
+        }
+        if (bi > 0 && bi - 1 < pins.length) {
+          caseTl.fromTo(pins[bi - 1], { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: crossfade }, start);
+        }
+        if (bi > 0) {
+          caseTl.fromTo(".cf-file",
+            { boxShadow: "0 26px 48px rgba(0,0,0,0.55), 0 0 0 1px #d9cfb4" },
+            { boxShadow: "0 26px 48px rgba(0,0,0,0.55), 0 0 0 3px #a8402f", duration: 0.3, yoyo: true, repeat: 1 },
+            start);
+        }
+
+        const shot = (bi === 0 || bi === beats.length - 1) ? wideShot : zoomShots[(bi - 1) % zoomShots.length];
+        const cutDur = Math.min(1.1, beatDur * 0.35);
+        caseTl.to(".cf-board", { scale: shot.scale, transformOrigin: shot.origin, duration: cutDur, ease: "power2.inOut" }, start);
+        // Đẩy nhẹ thêm trong lúc giữ khung (Ken Burns) — tránh đứng hình suốt phần còn lại beat.
+        const holdDur = Math.max(0.4, (end - start) - cutDur);
+        caseTl.to(".cf-board", { scale: shot.scale * 1.06, duration: holdDur, ease: "none" }, start + cutDur);
+      });
+
+      times.forEach((t, i) => {
+        const start = Math.min(D * 0.94, D * 0.55 + i * (D * 0.12 / Math.max(1, times.length)));
+        caseTl.fromTo("#cf-tl-" + i, { opacity: 0 }, { opacity: 1, duration: D * 0.02 }, start);
+      });
+      caseTl.seek(0);
+    };
+
     // Đồng bộ frame theo thời gian
     window.seekTo = function(seconds) {
       if (tl) tl.seek(seconds);
+      if (caseTl) caseTl.seek(seconds);
 
       // Gradient nền phải TỰ CHUYỂN theo thời gian. Không dùng CSS animation được vì mỗi frame
       // là 1 lần screenshot rời rạc (Playwright), CSS animation sẽ đứng im ở trạng thái đầu —
@@ -313,6 +608,14 @@
       if (grad && document.body.classList.contains("text-only")) {
         const pos = (seconds / 12.0) % 1;           // 1 vòng chuyển màu ~12 giây
         grad.style.backgroundPosition = `50% ${(pos * 100).toFixed(2)}%`;
+      }
+
+      // Hạt film của bảng hồ sơ — cùng lý do phải tự tính vị trí theo `seconds` thay vì CSS animation.
+      const grain = document.querySelector(".cf-grain");
+      if (grain && document.body.classList.contains("case-file")) {
+        const gx = (Math.sin(seconds * 9.7) * 3).toFixed(2);
+        const gy = (Math.cos(seconds * 7.3) * 3).toFixed(2);
+        grain.style.backgroundPosition = `${gx}% ${gy}%`;
       }
 
       const video = document.getElementById("background-video");

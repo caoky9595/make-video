@@ -1,19 +1,16 @@
 """
-tts.py - Text-to-Speech Engine (edge-tts + FPT.AI)
+tts.py - Text-to-Speech Engine (edge-tts + TikTok TTS + Google Cloud TTS)
 ====================================================
 Chuyển đổi kịch bản text thành file audio MP3 + file subtitle SRT.
 
-Hỗ trợ 2 engine:
-  - edge-tts: Miễn phí, không giới hạn, 2 giọng Việt (HoaiMy, NamMinh)
-  - FPT.AI:   Miễn phí 100k ký tự/tháng, 7 giọng Việt đa vùng miền
+Đã bỏ FPT.AI (commit sau "tune(voice)"): free tier liên tục 429 (hết quota ngày) trong lúc dùng
+thực tế, không đáng tin làm engine chính — mà chính sách hiện tại là KHÔNG fallback khi lỗi.
 """
 
 import asyncio
 import json
 import os
 import re
-import threading
-import time
 
 import edge_tts
 import requests
@@ -22,60 +19,16 @@ from core.utils.logger_config import logger
 
 load_dotenv()
 
-FPT_USAGE_FILE = "temp/fpt_usage.json"
-_fpt_usage_lock = threading.Lock()
-
-
-def _record_fpt_chars_used(char_count: int) -> None:
-    """Cộng dồn số ký tự đã gửi qua FPT.AI (free tier 100k ký tự/tháng), reset theo tháng —
-    để dashboard (/api/stats) hiển thị số dùng thật thay vì số giả cố định."""
-    with _fpt_usage_lock:
-        os.makedirs("temp", exist_ok=True)
-        month = time.strftime("%Y-%m")
-        data = {"month": month, "used": 0}
-        if os.path.exists(FPT_USAGE_FILE):
-            try:
-                with open(FPT_USAGE_FILE, "r") as f:
-                    loaded = json.load(f)
-                if loaded.get("month") == month:
-                    data = loaded
-            except Exception:
-                pass
-        data["used"] = data.get("used", 0) + char_count
-        with open(FPT_USAGE_FILE, "w") as f:
-            json.dump(data, f)
-
-
-def get_fpt_chars_used() -> int:
-    """Đọc số ký tự FPT.AI đã dùng trong tháng hiện tại."""
-    try:
-        with open(FPT_USAGE_FILE, "r") as f:
-            data = json.load(f)
-        if data.get("month") != time.strftime("%Y-%m"):
-            return 0
-        return int(data.get("used", 0))
-    except Exception:
-        return 0
-
 # ============================================================
 # DANH SÁCH GIỌNG ĐỌC
 # ============================================================
 
 # Edge-TTS voices (Microsoft)
+# Đã bỏ "namminh" (vi-VN-NamMinhNeural): người dùng nghe thử bản render thật thấy giọng lệch về
+# âm Nam Bộ, không phải Bắc như suy đoán ban đầu (Microsoft không công bố vùng miền chính thức
+# cho 2 giọng vi-VN, đây là tai người nghe thật quyết định, không phải nhãn máy).
 EDGE_VOICES = {
     "hoaimy":  "vi-VN-HoaiMyNeural",     # Nữ - giọng nữ trẻ, tự nhiên
-    "namminh": "vi-VN-NamMinhNeural",     # Nam - giọng nam trầm, chuyên nghiệp
-}
-
-# FPT.AI voices
-FPT_VOICES = {
-    "banmai":   {"id": "banmai",   "gender": "Nữ",  "region": "Bắc",   "desc": "Nữ Bắc - trẻ trung"},
-    "thuminh":  {"id": "thuminh",  "gender": "Nữ",  "region": "Bắc",   "desc": "Nữ Bắc - dịu dàng"},
-    "leminh":   {"id": "leminh",   "gender": "Nam",  "region": "Bắc",   "desc": "Nam Bắc - trầm ấm"},
-    "myan":     {"id": "myan",     "gender": "Nữ",  "region": "Trung",  "desc": "Nữ Trung Bộ"},
-    "giahuy":   {"id": "giahuy",   "gender": "Nam",  "region": "Trung",  "desc": "Nam Trung Bộ"},
-    "lannhi":   {"id": "lannhi",   "gender": "Nữ",  "region": "Nam",    "desc": "Nữ Nam Bộ"},
-    "linhsan":  {"id": "linhsan",  "gender": "Nữ",  "region": "Nam",    "desc": "Nữ Nam - mềm mại"},
 }
 
 # GOOGLE CLOUD TTS voices (tiếng Việt). Tên giọng theo đúng định danh của Google.
@@ -103,15 +56,7 @@ TIKTOK_VOICES = {
 }
 
 # Tất cả giọng hợp lệ
-ALL_VOICE_KEYS = list(EDGE_VOICES.keys()) + list(FPT_VOICES.keys()) + list(TIKTOK_VOICES.keys()) + list(GOOGLE_VOICES.keys())
-
-# Map tốc độ edge-tts (+20%) sang FPT.AI scale (-3 to +3)
-EDGE_RATE_TO_FPT_SPEED = {
-    "-50%": "-3", "-40%": "-3", "-30%": "-2", "-20%": "-2",
-    "-15%": "-1", "-10%": "-1", "+0%": "0", "0%": "0",
-    "+10%": "1", "+15%": "1", "+20%": "2", "+25%": "2",
-    "+30%": "3", "+40%": "3", "+50%": "3",
-}
+ALL_VOICE_KEYS = list(EDGE_VOICES.keys()) + list(TIKTOK_VOICES.keys()) + list(GOOGLE_VOICES.keys())
 
 
 def get_engine(voice: str) -> str:
@@ -123,15 +68,14 @@ def get_engine(voice: str) -> str:
         # Chấp nhận cả tên giọng Google truyền thẳng (vd "vi-VN-Chirp3-HD-Achernar") — danh sách
         # cứng GOOGLE_VOICES sẽ lỗi thời khi Google thêm giọng mới, không nên chặn người dùng.
         return "google"
-    elif v_lower in FPT_VOICES:
-        return "fpt"
     elif v_lower in TIKTOK_VOICES or v_lower.startswith("tiktok_"):
         return "tiktok"
     else:
         raise ValueError(
             f"Giọng '{voice}' không hợp lệ. Các giọng có sẵn:\n"
-            f"  FPT.AI:   {', '.join(FPT_VOICES.keys())}\n"
-            f"  TikTok:   {', '.join(TIKTOK_VOICES.keys())}"
+            f"  Edge-TTS: {', '.join(EDGE_VOICES.keys())}\n"
+            f"  TikTok:   {', '.join(TIKTOK_VOICES.keys())}\n"
+            f"  Google:   {', '.join(GOOGLE_VOICES.keys())}"
         )
 
 
@@ -139,10 +83,6 @@ def list_voices():
     """In danh sách tất cả giọng đọc có sẵn."""
     logger.info("\n📢 DANH SÁCH GIỌNG ĐỌC CÓ SẴN:")
     logger.info("=" * 60)
-
-    logger.info("\n🔶 FPT.AI (miễn phí 100k ký tự/tháng, giọng rất tự nhiên):")
-    for key, info in FPT_VOICES.items():
-        logger.info(f"   • {key:12s} → {info['gender']} {info['region']:5s} | {info['desc']}")
 
     logger.info("\n🎵 TIKTOK TTS (Trick 0đ - Chuẩn MMO):")
     for key, info in TIKTOK_VOICES.items():
@@ -203,6 +143,31 @@ def parse_script(raw_text: str) -> str:
 # tức không có timestamp thật từ TTS engine cho từng từ)
 # ============================================================
 
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _estimate_number_syllables(token: str) -> int:
+    """Ước lượng SỐ ÂM TIẾT THẬT khi đọc 1 số bằng tiếng Việt — vd "1994" chỉ 4 KÝ TỰ nhưng đọc
+    thành "một nghìn chín trăm chín mươi tư" = 7 ÂM TIẾT. Đây là nguồn lệch phụ đề LỚN NHẤT đo
+    được (xem _word_speak_and_pause_weight): trọng số cũ tính theo ĐỘ DÀI KÝ TỰ nên số bị coi
+    ngắn ngang một từ thường, trong khi phát âm thật dài gấp nhiều lần — làm mọi từ SAU số đó
+    trong cùng câu bị dồn sớm hơn thực tế. Ngách bí ẩn dùng số RẤT nhiều (năm, số người, số phút)
+    nên gần như câu nào cũng dính. Không cần chính xác tuyệt đối (không convert đủ thành chữ),
+    chỉ cần đủ tốt để không lệch hẳn theo cấp số nhân của độ dài số.
+    """
+    digits = re.sub(r"[^\d]", "", token)
+    n = len(digits)
+    if n == 0:
+        return 0
+    if n <= 2:
+        return max(1, n)                      # "12" -> "mười hai" ~2, "5" -> "năm" ~1
+    if n == 3:
+        return 2 if digits[0] == "0" else 3   # "994" -> "chín trăm chín mươi tư" ~3 cụm
+    if n == 4:
+        return 6                              # năm/số 4 chữ số kiểu "1994" -> ~6-7 âm tiết
+    return max(4, round(n * 1.6))              # số dài hơn (hiếm gặp) -> ước lượng theo tỉ lệ
+
+
 def _word_speak_and_pause_weight(word: str) -> tuple:
     """Trả về (trọng số thời gian NÓI, trọng số thời gian NGỪNG ngay sau từ này).
 
@@ -216,7 +181,13 @@ def _word_speak_and_pause_weight(word: str) -> tuple:
     số dấu câu đã đi qua). Cộng thêm trọng số ngừng sau mỗi dấu câu để mô phỏng đúng quãng
     nghỉ đó, giữ từ tiếp theo không bị đẩy sớm.
     """
-    speak_weight = 1.0 + max(0, len(word) - 6) * 0.15
+    if _DIGIT_RE.search(word):
+        # Số: dùng ước lượng ÂM TIẾT THẬT thay vì độ dài ký tự — đo thực tế thấy "1994," trong
+        # model cũ chỉ chiếm ~0.2s (bằng 1 từ thường) nhưng giọng đọc thật mất tới ~1,7s, làm
+        # toàn bộ câu sau đó bị dồn sớm hơn thực tế gần 1 giây.
+        speak_weight = max(1.0, float(_estimate_number_syllables(word)))
+    else:
+        speak_weight = 1.0 + max(0, len(word) - 6) * 0.15
     stripped = word.rstrip("\"'”’)]»")
     pause_weight = 0.0
     if stripped.endswith("...") or stripped.endswith("…"):
@@ -224,7 +195,10 @@ def _word_speak_and_pause_weight(word: str) -> tuple:
     elif stripped.endswith((".", "!", "?")):
         pause_weight = 1.1  # ngừng hết câu
     elif stripped.endswith((",", ";", ":")):
-        pause_weight = 0.6  # ngừng hơi giữa câu
+        # Đo thực tế (silencedetect trên audio thật): quãng ngừng sau dấu phẩy giữa câu ~0.35s,
+        # xấp xỉ 1 từ trọn vẹn chứ không phải 0,6 — nâng lên cho khớp, tránh dồn từ sau dấu phẩy
+        # sớm hơn thực tế.
+        pause_weight = 1.0
     return speak_weight, pause_weight
 
 
@@ -310,99 +284,7 @@ async def _generate_edge_tts(text: str, output_audio: str, output_srt: str, rate
 
 
 # ============================================================
-# ENGINE 2: FPT.AI
-# ============================================================
-
-def _edge_rate_to_fpt_speed(rate: str) -> str:
-    """Chuyển đổi tốc độ edge-tts sang FPT.AI speed."""
-    return EDGE_RATE_TO_FPT_SPEED.get(rate, "0")
-
-
-def _generate_fpt_tts(text: str, output_audio: str, output_srt: str, rate: str, voice: str):
-    """Sinh audio + subtitle bằng FPT.AI API."""
-    api_key = os.getenv("FPT_AI_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "❌ FPT_AI_API_KEY chưa được cấu hình!\n"
-            "   Thêm vào file .env: FPT_AI_API_KEY=your_key_here\n"
-            "   Đăng ký miễn phí tại: https://console.fpt.ai/"
-        )
-
-    voice_info = FPT_VOICES[voice.lower()]
-    fpt_speed = _edge_rate_to_fpt_speed(rate)
-
-    logger.info(f"  [TTS] Engine: FPT.AI (v5)")
-    logger.info(f"  [TTS] Voice: {voice_info['id']} ({voice_info['desc']}) | Speed: {fpt_speed}")
-
-    # Gọi FPT.AI API
-    headers = {
-        "api-key": api_key,
-        "voice": voice_info["id"],
-        "speed": fpt_speed,
-        "format": "mp3",
-    }
-
-    response = requests.post(
-        "https://api.fpt.ai/hmi/tts/v5",
-        headers=headers,
-        data=text.encode("utf-8"),
-        timeout=30,
-    )
-
-    if response.status_code != 200:
-        raise RuntimeError(f"FPT.AI API error: HTTP {response.status_code} - {response.text}")
-
-    result = response.json()
-
-    if result.get("error") and result["error"] != 0:
-        raise RuntimeError(f"FPT.AI API error: {result.get('message', 'Unknown error')}")
-
-    _record_fpt_chars_used(len(text))
-
-    # FPT.AI trả về async link → cần đợi audio sẵn sàng
-    audio_url = result.get("async")
-    if not audio_url:
-        raise RuntimeError(f"FPT.AI API không trả về audio URL. Response: {result}")
-
-    logger.info(f"  [TTS] Audio đang được xử lý bởi FPT.AI...")
-
-    # Đợi và tải file audio (FPT.AI xử lý async, cần retry)
-    max_retries = 20
-    for attempt in range(max_retries):
-        time.sleep(1.5)  # Đợi 1.5s giữa mỗi lần thử
-        try:
-            audio_response = requests.get(audio_url, timeout=15)
-            if audio_response.status_code == 200 and len(audio_response.content) > 1000:
-                with open(output_audio, "wb") as f:
-                    f.write(audio_response.content)
-                logger.info(f"  [TTS] ✅ Audio tải xong ({len(audio_response.content) / 1024:.1f} KB)")
-                break
-        except requests.exceptions.RequestException:
-            pass
-
-        if attempt == max_retries - 1:
-            raise RuntimeError("❌ Timeout: FPT.AI không trả về audio sau 30 giây.")
-        
-        logger.info(f"  [TTS] Đang đợi FPT.AI xử lý... ({attempt + 1}/{max_retries})")
-
-    # Tạo word timing bằng phương pháp nội suy từ audio duration
-    words_data = _interpolate_word_timing_from_audio(text, output_audio)
-
-    # Xuất SRT từ word timing
-    srt_content = _words_to_srt(words_data)
-    with open(output_srt, "w", encoding="utf-8") as f:
-        f.write(srt_content)
-
-    # Xuất JSON word timing
-    words_json_path = output_srt.replace(".srt", "_words.json")
-    with open(words_json_path, "w", encoding="utf-8") as f:
-        json.dump(words_data, f, ensure_ascii=False, indent=2)
-
-    return words_data
-
-
-# ============================================================
-# ENGINE 4: GOOGLE CLOUD TTS
+# ENGINE 2: GOOGLE CLOUD TTS
 # ============================================================
 
 def _edge_rate_to_google_speed(rate: str) -> float:
@@ -460,8 +342,9 @@ def _generate_google_tts(text: str, output_audio: str, output_srt: str, rate: st
     with open(output_audio, "wb") as f:
         f.write(base64.b64decode(audio_b64))
 
-    # Google chỉ trả audio, không có mốc thời gian từng từ -> nội suy từ độ dài audio thật,
-    # cùng cách đang dùng cho FPT.
+    # Google chỉ trả audio, không có mốc thời gian từng từ -> nội suy từ độ dài audio thật
+    # (_interpolate_word_timing_from_audio, dùng trọng số âm tiết đã hiệu chỉnh — xem
+    # _word_speak_and_pause_weight).
     words_data = _interpolate_word_timing_from_audio(text, output_audio)
     with open(output_srt, "w", encoding="utf-8") as f:
         f.write(_words_to_srt(words_data))
@@ -771,9 +654,9 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
     # Chọn engine dựa trên tên giọng
     engine = get_engine(voice)
 
-    # KHÔNG fallback sang giọng khác khi lỗi. Đã thử cách đó và nó gây hiểu nhầm: FPT bị 429 thì
-    # `leminh` âm thầm thành `namminh`, người dùng chọn 2 giọng khác nhau lại nghe y hệt mà không
-    # biết vì sao. Thà hỏng job và báo rõ còn hơn ra sản phẩm sai giọng.
+    # KHÔNG fallback sang giọng khác khi lỗi. Đã thử cách đó và nó gây hiểu nhầm: trước đây FPT
+    # bị 429 thì `leminh` âm thầm thành `namminh`, người dùng chọn 2 giọng khác nhau lại nghe y
+    # hệt mà không biết vì sao. Thà hỏng job và báo rõ còn hơn ra sản phẩm sai giọng.
     if engine == "edge":
         voice_id = EDGE_VOICES.get(voice.lower(), voice)
         await _generate_edge_tts(text, output_audio, output_srt, rate, voice_id)
@@ -781,8 +664,6 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
         _generate_google_tts(text, output_audio, output_srt, rate, voice)
     elif engine == "tiktok":
         await _generate_tiktok_api(text, output_audio, output_srt, rate, voice)
-    elif engine == "fpt":
-        _generate_fpt_tts(text, output_audio, output_srt, rate, voice)
 
     logger.info(f"  [TTS] ✅ Audio saved: {output_audio}")
     logger.info(f"  [TTS] ✅ Subtitles saved: {output_srt}")
@@ -792,11 +673,11 @@ async def generate_tts(text_file: str = None, output_audio: str = "temp/audio.mp
 
 
 def run_tts(text_file: str = None, output_audio: str = "temp/audio.mp3", output_srt: str = "temp/subtitles.srt", rate: str = "+50%", voice: str = "hoaimy", raw_text_input: str = None):
-    """Wrapper đồng bộ cho generate_tts. Trả về tên giọng THỰC SỰ đã dùng.
+    """Wrapper đồng bộ cho generate_tts.
 
-    Cần trả về vì có thể khác giọng người dùng chọn (FPT/TikTok hỏng -> lùi về Edge). Không báo
-    ra thì người dùng tưởng 2 giọng khác nhau lại nghe y hệt — đúng tình huống đã gặp: FPT bị 429
-    nên `leminh` âm thầm thành `namminh`.
+    Trả về `voice` y nguyên (KHÔNG fallback/đổi giọng khi lỗi — lỗi thì raise thẳng, xem
+    generate_tts). Giữ giá trị trả về (thay vì None) để tương thích ngược với code gọi hàm này
+    và lấy tên giọng đã dùng (vd app.py::run_pipeline).
     """
     return asyncio.run(generate_tts(text_file, output_audio, output_srt, rate=rate, voice=voice, raw_text_input=raw_text_input))
 
